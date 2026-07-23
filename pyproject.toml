@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pulse-shape-novera"
+version = "0.0.1"
+description = "Robust quantum gate pulse design via geometric space curves (qurveros + curvecontroltoolbox)."
+readme = "CLAUDE.md"
+requires-python = ">=3.10"
+# Runtime deps (qurveros, curvecontroltoolbox, jax, qutip, ...) are provided by
+# the `curve` conda env via editable installs; see environment.yml. They are
+# intentionally not re-pinned here to avoid a second source of truth.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
