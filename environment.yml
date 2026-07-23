@@ -1,0 +1,48 @@
+# Conda environment for pulse-shape-Novera.
+#
+# Recreate with:   conda env create -f environment.yml
+# Update with:     conda env update -f environment.yml --prune
+#
+# The two core dependencies (qurveros, curvecontroltoolbox) are installed
+# EDITABLE from sibling repos, assuming this layout:
+#
+#   Gate_construction/
+#     pulse-shape-Novera/          <- this repo (run conda from here)
+#     curvecontroltoolbox/
+#     space_curve_recent_dev/qurveros-main/
+#
+# If conda cannot resolve the relative -e paths on your machine, create the
+# env from the two blocks below manually (these are the commands that were
+# verified to work on 2026-07-23, macOS / Python 3.11):
+#
+#   conda create -n curve python=3.11 -y
+#   conda run -n curve pip install -e ../space_curve_recent_dev/qurveros-main
+#   conda run -n curve pip install -e "../curvecontroltoolbox[noise]"
+#
+# NOTE: curvecontroltoolbox's [opt] extra needs qutip-qoc>=0.2.0, which is not
+# pip-installable on this platform (2026-07-23). [opt] only powers
+# curvecontroltoolbox's *own* optimizer; our pipeline optimizes with qurveros,
+# so [noise] is sufficient. Revisit if we ever need the in-toolbox optimizer.
+
+name: curve
+
+channels:
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # Core: editable installs of the two upstream repos (sibling layout).
+      - -e ../space_curve_recent_dev/qurveros-main
+      - -e ../curvecontroltoolbox[noise]
+      # Verified third-party versions (2026-07-23). qurveros pulls these in;
+      # pinned here so the env is reproducible even if upstream deps drift.
+      - jax==0.4.38
+      - jaxlib==0.4.38
+      - optax==0.2.5
+      - numpy==2.4.6
+      - scipy==1.17.1
+      - qutip==5.3.0
+      - pandas==3.0.5
+      - matplotlib==3.11.1
