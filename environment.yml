@@ -17,12 +17,15 @@
 #
 #   conda create -n curve python=3.11 -y
 #   conda run -n curve pip install -e ../space_curve_recent_dev/qurveros-main
-#   conda run -n curve pip install -e "../curvecontroltoolbox[noise]"
+#   conda run -n curve pip install "git+https://github.com/qutip/qutip-qoc.git"
+#   conda run -n curve pip install -e "../curvecontroltoolbox[opt]"
 #
-# NOTE: curvecontroltoolbox's [opt] extra needs qutip-qoc>=0.2.0, which is not
-# pip-installable on this platform (2026-07-23). [opt] only powers
-# curvecontroltoolbox's *own* optimizer; our pipeline optimizes with qurveros,
-# so [noise] is sufficient. Revisit if we ever need the in-toolbox optimizer.
+# NOTE on qutip-qoc: curvecontroltoolbox's [opt] extra needs qutip-qoc>=0.2.0.
+# PyPI only ships an arm64-mac wheel for 0.2.0 (no x86_64 wheel, no sdist), so
+# on this Intel Mac it must be built from GitHub source (yields 0.3.0.dev0,
+# which satisfies >=0.2.0). Install it BEFORE curvecontroltoolbox[opt] so the
+# extra resolves. On Apple Silicon / Linux the plain PyPI wheel works and this
+# git line can be dropped.
 
 name: curve
 
@@ -35,7 +38,10 @@ dependencies:
   - pip:
       # Core: editable installs of the two upstream repos (sibling layout).
       - -e ../space_curve_recent_dev/qurveros-main
-      - -e ../curvecontroltoolbox[noise]
+      # qutip-qoc from source (Intel-mac has no PyPI wheel; see NOTE above).
+      # Must precede curvecontroltoolbox[opt] so the extra resolves.
+      - git+https://github.com/qutip/qutip-qoc.git
+      - -e ../curvecontroltoolbox[opt]
       # Verified third-party versions (2026-07-23). qurveros pulls these in;
       # pinned here so the env is reproducible even if upstream deps drift.
       - jax==0.4.38
