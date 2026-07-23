@@ -1,0 +1,54 @@
+# Conda environment for pulse-shape-Novera.
+#
+# Recreate with:   conda env create -f environment.yml
+# Update with:     conda env update -f environment.yml --prune
+#
+# The two core dependencies (qurveros, curvecontroltoolbox) are installed
+# EDITABLE from sibling repos, assuming this layout:
+#
+#   Gate_construction/
+#     pulse-shape-Novera/          <- this repo (run conda from here)
+#     curvecontroltoolbox/
+#     space_curve_recent_dev/qurveros-main/
+#
+# If conda cannot resolve the relative -e paths on your machine, create the
+# env from the two blocks below manually (these are the commands that were
+# verified to work on 2026-07-23, macOS / Python 3.11):
+#
+#   conda create -n curve python=3.11 -y
+#   conda run -n curve pip install -e ../space_curve_recent_dev/qurveros-main
+#   conda run -n curve pip install "git+https://github.com/qutip/qutip-qoc.git"
+#   conda run -n curve pip install -e "../curvecontroltoolbox[opt]"
+#
+# NOTE on qutip-qoc: curvecontroltoolbox's [opt] extra needs qutip-qoc>=0.2.0.
+# PyPI only ships an arm64-mac wheel for 0.2.0 (no x86_64 wheel, no sdist), so
+# on this Intel Mac it must be built from GitHub source (yields 0.3.0.dev0,
+# which satisfies >=0.2.0). Install it BEFORE curvecontroltoolbox[opt] so the
+# extra resolves. On Apple Silicon / Linux the plain PyPI wheel works and this
+# git line can be dropped.
+
+name: curve
+
+channels:
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # Core: editable installs of the two upstream repos (sibling layout).
+      - -e ../space_curve_recent_dev/qurveros-main
+      # qutip-qoc from source (Intel-mac has no PyPI wheel; see NOTE above).
+      # Must precede curvecontroltoolbox[opt] so the extra resolves.
+      - git+https://github.com/qutip/qutip-qoc.git
+      - -e ../curvecontroltoolbox[opt]
+      # Verified third-party versions (2026-07-23). qurveros pulls these in;
+      # pinned here so the env is reproducible even if upstream deps drift.
+      - jax==0.4.38
+      - jaxlib==0.4.38
+      - optax==0.2.5
+      - numpy==2.4.6
+      - scipy==1.17.1
+      - qutip==5.3.0
+      - pandas==3.0.5
+      - matplotlib==3.11.1
