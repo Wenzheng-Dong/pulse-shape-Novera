@@ -5,3 +5,9 @@
 
 # 项目规划/协作文档,不纳入版本控制
 CLAUDE.md
+
+# Python 构建/缓存产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
