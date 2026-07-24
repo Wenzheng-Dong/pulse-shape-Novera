@@ -30,6 +30,11 @@ from pulse_shape_novera.ansatz import (
 )
 from pulse_shape_novera.simulate import gate_fidelity, rotation
 from pulse_shape_novera.optimize import optimize_gate_time
+from pulse_shape_novera.bezier import (
+    fit_bezier_control_points,
+    make_bezier_spacecurve,
+    reconstruct_spacecurve,
+)
 
 __all__ = [
     "circle_arc_curve",
@@ -48,4 +53,7 @@ __all__ = [
     "gate_fidelity",
     "rotation",
     "optimize_gate_time",
+    "fit_bezier_control_points",
+    "make_bezier_spacecurve",
+    "reconstruct_spacecurve",
 ]
