@@ -8,5 +8,11 @@ conventions. The package couples two upstream libraries:
 """
 
 from pulse_shape_novera.ansatz import circle_arc_curve, make_circle_arc_spacecurve
+from pulse_shape_novera.simulate import gate_fidelity, rotation
 
-__all__ = ["circle_arc_curve", "make_circle_arc_spacecurve"]
+__all__ = [
+    "circle_arc_curve",
+    "make_circle_arc_spacecurve",
+    "gate_fidelity",
+    "rotation",
+]
