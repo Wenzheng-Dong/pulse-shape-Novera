@@ -46,14 +46,23 @@ def make_barq_xgate(*, n_free_points: int = 10, seed: int = 4531469,
 
 
 def optimize_barq_robustness(barq: BarqCurve, *, max_iter: int = 1500, lr: float = 1e-3,
-                             amp_weight: float = 1e-2) -> BarqCurve:
-    """Optimize robustness (tantrix zero-area + max-amp) with the scale frozen."""
+                             amp_weight: float = 1e-2, loss_terms=None) -> BarqCurve:
+    """Optimize robustness with the scale (norm_value) frozen.
+
+    ``loss_terms`` is a list of ``[loss_fn, weight]`` (any qurveros frenet_dict
+    loss). Defaults to ``[tantrix_zero_area, 1] + [max_amp, amp_weight]`` (the
+    amplitude-error arm from step 8). Pass e.g. ``[[curve_zero_area_loss, 1],
+    [max_amp_loss, lam]]`` to optimize dephasing robustness under an amplitude
+    penalty.
+    """
+    if loss_terms is None:
+        loss_terms = [[losses.tantrix_zero_area_loss, 1.0],
+                      [losses.max_amp_loss, amp_weight]]
     labels = jax.tree.map(lambda _: True, barq.params)
     labels["pgf_params"]["norm_value"] = False          # freeze scale (gauge)
     optimizer = optax.multi_transform(
         {True: optax.adam(lr), False: optax.set_to_zero()}, param_labels=labels)
-    barq.prepare_optimization_loss(
-        [losses.tantrix_zero_area_loss, 1.0], [losses.max_amp_loss, amp_weight])
+    barq.prepare_optimization_loss(*loss_terms)
     barq.optimize(optimizer, max_iter=max_iter)
     return barq
 
