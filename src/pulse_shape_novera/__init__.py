@@ -13,13 +13,20 @@ from pulse_shape_novera._patches import apply_qurveros_patches
 
 apply_qurveros_patches()
 
-from pulse_shape_novera.ansatz import circle_arc_curve, make_circle_arc_spacecurve
+from pulse_shape_novera.ansatz import (
+    circle_arc_curve,
+    make_circle_arc_spacecurve,
+    helix_curve,
+    make_helix_spacecurve,
+)
 from pulse_shape_novera.simulate import gate_fidelity, rotation
 from pulse_shape_novera.optimize import optimize_gate_time
 
 __all__ = [
     "circle_arc_curve",
     "make_circle_arc_spacecurve",
+    "helix_curve",
+    "make_helix_spacecurve",
     "gate_fidelity",
     "rotation",
     "optimize_gate_time",

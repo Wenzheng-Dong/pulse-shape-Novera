@@ -68,3 +68,54 @@ def make_circle_arc_spacecurve(turning_angle: float, duration: float = 1.0) -> S
         interval=[0.0, duration],
         params=kappa,
     )
+
+
+def helix_curve(x, params):
+    """Unit-speed helix with constant curvature and torsion, matching
+    curvecontroltoolbox's ``helix`` family (``_build_constant_frenet_helix``).
+
+    Parameters
+    ----------
+    x : float or jax array
+        Curve parameter (arc length).
+    params : array-like of shape (2,)
+        ``(curvature, torsion)``. Under the SCQC map curvature is the Rabi rate
+        ``Omega`` and torsion is ``d(Phi)/dt`` -- so unlike the planar families
+        this one exercises a nonzero (constant) drive-phase rate.
+
+    Returns
+    -------
+    list
+        ``[x, y, z]`` position. With ``c = sqrt(k^2 + t^2)``, radius ``a = k/c^2``
+        and slope ``b = t/c^2`` the curve ``[a cos(cx), a sin(cx), b c x]`` is
+        unit speed with curvature ``k`` and torsion ``t`` (rigid orientation is
+        irrelevant to those invariants, so we omit cct's initial-frame rotation).
+    """
+    kappa, tau = params[0], params[1]
+    c = jnp.sqrt(kappa ** 2 + tau ** 2)
+    radius = kappa / c ** 2
+    slope = tau / c ** 2
+    return [radius * jnp.cos(c * x), radius * jnp.sin(c * x), slope * c * x]
+
+
+def make_helix_spacecurve(curvature: float, torsion: float,
+                          duration: float = 1.0) -> SpaceCurve:
+    """Build a qurveros ``SpaceCurve`` for the ``helix`` family via Path A.
+
+    Parameters
+    ----------
+    curvature, torsion : float
+        Constant curvature and torsion (both nonzero -> a genuine 3D curve).
+    duration : float, optional
+        Arc length / gate time ``T_g`` (default 1.0); the helix is unit speed.
+    """
+    if duration <= 0.0:
+        raise ValueError("duration must be positive.")
+    if curvature == 0.0 and torsion == 0.0:
+        raise ValueError("curvature and torsion cannot both be zero.")
+    return SpaceCurve(
+        curve=helix_curve,
+        order=0,
+        interval=[0.0, duration],
+        params=jnp.array([float(curvature), float(torsion)]),
+    )
