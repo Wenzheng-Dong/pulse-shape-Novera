@@ -27,6 +27,7 @@ from pulse_shape_novera.ansatz import (
     gaussian_arc_tangent,
     make_triangle_pulse_spacecurve,
     make_gaussian_arc_spacecurve,
+    make_rcp_spacecurve,
 )
 from pulse_shape_novera.simulate import gate_fidelity, rotation
 from pulse_shape_novera.optimize import optimize_gate_time
@@ -55,6 +56,7 @@ __all__ = [
     "gaussian_arc_tangent",
     "make_triangle_pulse_spacecurve",
     "make_gaussian_arc_spacecurve",
+    "make_rcp_spacecurve",
     "gate_fidelity",
     "rotation",
     "optimize_gate_time",
