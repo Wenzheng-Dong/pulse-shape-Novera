@@ -237,3 +237,42 @@ def make_gaussian_arc_spacecurve(turning_angle: float, duration: float = 1.0,
         raise ValueError("sigma_fraction must be positive.")
     return SpaceCurve(curve=gaussian_arc_tangent, order=1, interval=[0.0, duration],
                       params=jnp.array([float(turning_angle), float(duration), float(sigma_fraction)]))
+
+
+# --------------------------------------------------------------------------
+# RCP z-error families (rcp_lemniscate, rcp_petal): closed, dephasing-robust
+# curves that natively implement a target gate angle -- the "good ansatz" for a
+# robust gate (see _plan.md claim 2). curvecontroltoolbox builds them from a
+# closure-corrected sine series Omega(t) = sum_n a_n sin(n*pi*t/T); the tangent
+# angle theta(x) = integral Omega is exact term-by-term, so we wrap them exactly
+# via order=1 (Bezier reconstruction is unstable for these -- their gate is
+# sensitive). Coefficients are read from cct at construction so we stay in sync.
+# --------------------------------------------------------------------------
+
+def make_rcp_spacecurve(family: str = "rcp_lemniscate",
+                        gate_rotation_angle: float = float(jnp.pi)) -> SpaceCurve:
+    """Build a qurveros ``SpaceCurve`` for an RCP z-error family via Path A (order=1).
+
+    Parameters
+    ----------
+    family : str
+        ``"rcp_lemniscate"`` (closed + zero-area -> 2nd-order dephasing robust) or
+        ``"rcp_petal"`` (closed, 1st-order only).
+    gate_rotation_angle : float
+        Target gate angle; must match a stored member (0, pi/4, pi/2, pi).
+    """
+    # Read the stored Omega-sine-series member from curvecontroltoolbox.
+    from curvecontroltoolbox.curve_families import _select_rcp_member
+
+    member = _select_rcp_member(family, gate_rotation_angle)
+    coefficients = jnp.asarray(member["omega_sine_coefficients"], dtype=float)
+    duration = float(member["omega_duration"])
+    harmonics = jnp.arange(1, coefficients.shape[0] + 1, dtype=float)
+
+    def rcp_tangent(x, params):
+        # theta(x) = sum_n a_n (T/(n*pi)) (1 - cos(n*pi*x)), x in [0, 1].
+        theta = jnp.sum(coefficients * (duration / (harmonics * jnp.pi))
+                        * (1.0 - jnp.cos(harmonics * jnp.pi * x)))
+        return [0.0 * x, jnp.sin(theta), jnp.cos(theta)]
+
+    return SpaceCurve(curve=rcp_tangent, order=1, interval=[0.0, 1.0], params=0.0)
