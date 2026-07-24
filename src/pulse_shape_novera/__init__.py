@@ -41,6 +41,7 @@ from pulse_shape_novera.barq import (
     optimize_barq_robustness,
     barq_gate_fidelity,
 )
+from pulse_shape_novera.proxies import pulse_energy_loss
 
 __all__ = [
     "circle_arc_curve",
@@ -66,4 +67,5 @@ __all__ = [
     "make_barq_xgate",
     "optimize_barq_robustness",
     "barq_gate_fidelity",
+    "pulse_energy_loss",
 ]
