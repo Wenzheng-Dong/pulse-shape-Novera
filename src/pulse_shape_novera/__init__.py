@@ -18,6 +18,11 @@ from pulse_shape_novera.ansatz import (
     make_circle_arc_spacecurve,
     helix_curve,
     make_helix_spacecurve,
+    lissajous_curve,
+    alpha_curve,
+    zeng_clifford_curve,
+    ANALYTIC_FAMILY_CURVES,
+    make_analytic_spacecurve,
 )
 from pulse_shape_novera.simulate import gate_fidelity, rotation
 from pulse_shape_novera.optimize import optimize_gate_time
@@ -27,6 +32,11 @@ __all__ = [
     "make_circle_arc_spacecurve",
     "helix_curve",
     "make_helix_spacecurve",
+    "lissajous_curve",
+    "alpha_curve",
+    "zeng_clifford_curve",
+    "ANALYTIC_FAMILY_CURVES",
+    "make_analytic_spacecurve",
     "gate_fidelity",
     "rotation",
     "optimize_gate_time",
