@@ -23,6 +23,10 @@ from pulse_shape_novera.ansatz import (
     zeng_clifford_curve,
     ANALYTIC_FAMILY_CURVES,
     make_analytic_spacecurve,
+    triangle_pulse_tangent,
+    gaussian_arc_tangent,
+    make_triangle_pulse_spacecurve,
+    make_gaussian_arc_spacecurve,
 )
 from pulse_shape_novera.simulate import gate_fidelity, rotation
 from pulse_shape_novera.optimize import optimize_gate_time
@@ -37,6 +41,10 @@ __all__ = [
     "zeng_clifford_curve",
     "ANALYTIC_FAMILY_CURVES",
     "make_analytic_spacecurve",
+    "triangle_pulse_tangent",
+    "gaussian_arc_tangent",
+    "make_triangle_pulse_spacecurve",
+    "make_gaussian_arc_spacecurve",
     "gate_fidelity",
     "rotation",
     "optimize_gate_time",

@@ -15,6 +15,7 @@ rate ``Omega`` and torsion is ``d(phi)/dt``.
 from __future__ import annotations
 
 import jax.numpy as jnp
+from jax.scipy.special import erf
 from qurveros.spacecurve import SpaceCurve
 
 
@@ -175,3 +176,64 @@ def make_analytic_spacecurve(name: str) -> SpaceCurve:
         raise KeyError(f"unknown analytic family {name!r}; have {sorted(ANALYTIC_FAMILY_CURVES)}")
     curve_fn, interval = ANALYTIC_FAMILY_CURVES[name]
     return SpaceCurve(curve=curve_fn, order=0, interval=interval, params=0.0)
+
+
+# --------------------------------------------------------------------------
+# Integral / profile-defined families (Path A via the TANGENT, order=1).
+#
+# These planar arcs (curvecontroltoolbox builds them by integrating a curvature
+# envelope) are not closed-form positions, but their unit tangent is:
+# T(x) = [0, sin(theta(x)), cos(theta(x))] with theta(x) = integral_0^x kappa.
+# We give qurveros that tangent (order=1); it integrates to the curve. The
+# envelope is scaled so total turning integral(kappa) = turning_angle, so a
+# planar arc(turning_angle) realizes an X(turning_angle) rotation.
+# --------------------------------------------------------------------------
+
+def triangle_pulse_tangent(x, params):
+    """Unit tangent of the symmetric triangle-curvature arc (cct ``triangle_pulse_arc``).
+
+    ``params = (turning_angle, duration)``. The triangle envelope integrates to a
+    piecewise-quadratic tangent angle; curvature ramps from 0 at both ends to a
+    peak at the midpoint.
+    """
+    theta_total, duration = params[0], params[1]
+    u = x / duration
+    theta = jnp.where(
+        x <= 0.5 * duration,
+        2.0 * theta_total * u ** 2,
+        theta_total - 2.0 * theta_total * (1.0 - u) ** 2,
+    )
+    return [0.0 * x, jnp.sin(theta), jnp.cos(theta)]
+
+
+def gaussian_arc_tangent(x, params):
+    """Unit tangent of the truncated-Gaussian-curvature arc (cct ``gaussian_arc``).
+
+    ``params = (turning_angle, duration, sigma_fraction)``. The Gaussian envelope
+    integrates (via erf) to a smooth tangent angle; curvature is bell-shaped with
+    small nonzero endpoints (the truncation).
+    """
+    theta_total, duration, sigma = params[0], params[1], params[2]
+    scale = sigma * jnp.sqrt(2.0)
+    e_half = erf(0.5 / scale)
+    theta = 0.5 * theta_total * (1.0 + erf((x / duration - 0.5) / scale) / e_half)
+    return [0.0 * x, jnp.sin(theta), jnp.cos(theta)]
+
+
+def make_triangle_pulse_spacecurve(turning_angle: float, duration: float = 1.0) -> SpaceCurve:
+    """Build a qurveros ``SpaceCurve`` for ``triangle_pulse_arc`` via Path A (order=1)."""
+    if duration <= 0.0:
+        raise ValueError("duration must be positive.")
+    return SpaceCurve(curve=triangle_pulse_tangent, order=1, interval=[0.0, duration],
+                      params=jnp.array([float(turning_angle), float(duration)]))
+
+
+def make_gaussian_arc_spacecurve(turning_angle: float, duration: float = 1.0,
+                                 sigma_fraction: float = 0.18) -> SpaceCurve:
+    """Build a qurveros ``SpaceCurve`` for ``gaussian_arc`` via Path A (order=1)."""
+    if duration <= 0.0:
+        raise ValueError("duration must be positive.")
+    if sigma_fraction <= 0.0:
+        raise ValueError("sigma_fraction must be positive.")
+    return SpaceCurve(curve=gaussian_arc_tangent, order=1, interval=[0.0, duration],
+                      params=jnp.array([float(turning_angle), float(duration), float(sigma_fraction)]))
