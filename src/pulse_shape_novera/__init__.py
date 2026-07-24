@@ -35,6 +35,11 @@ from pulse_shape_novera.bezier import (
     make_bezier_spacecurve,
     reconstruct_spacecurve,
 )
+from pulse_shape_novera.barq import (
+    make_barq_xgate,
+    optimize_barq_robustness,
+    barq_gate_fidelity,
+)
 
 __all__ = [
     "circle_arc_curve",
@@ -56,4 +61,7 @@ __all__ = [
     "fit_bezier_control_points",
     "make_bezier_spacecurve",
     "reconstruct_spacecurve",
+    "make_barq_xgate",
+    "optimize_barq_robustness",
+    "barq_gate_fidelity",
 ]
