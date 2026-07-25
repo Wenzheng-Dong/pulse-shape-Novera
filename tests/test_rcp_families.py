@@ -31,7 +31,17 @@ def test_rcp_lemniscate_is_already_dephasing_robust():
     curve_area = float(np.sum(losses.curve_zero_area_loss(sc.frenet_dict)))
     assert curve_area < 1e-3, curve_area
 
-# Note: only the pi (X-gate) member is used as the robust-X ansatz and validated
-# here. Other stored gate angles (pi/2, pi/4) also wrap, but the identification
-# of their (tangent) gate_angle with a specific qubit rotation is not asserted --
-# out of scope for the robust-X study.
+
+@pytest.mark.parametrize("angle", [np.pi / 2, np.pi / 4])
+def test_rcp_other_angles_implement_negative_x_rotation(angle):
+    """The pi/2 and pi/4 members implement R_x(-angle) in qurveros' convention.
+
+    curvecontroltoolbox and qurveros use OPPOSITE rotation-sign conventions for
+    the SCQC gate (invisible at pi, since R_x(pi) = R_x(-pi) up to phase): cct
+    reports +angle, qurveros gives -angle for the same physical curve. So these
+    members are genuine pi/2 and pi/4 X-rotations (magnitude matches gate_angle),
+    just the -x direction here. This locks in that understanding.
+    """
+    sc = make_rcp_spacecurve("rcp_lemniscate", angle)
+    assert gate_fidelity(sc, rotation("x", -angle))["fidelity"] > 1.0 - 1e-4   # R_x(-angle)
+    assert gate_fidelity(sc, rotation("x", +angle))["fidelity"] < 0.9          # NOT R_x(+angle)
