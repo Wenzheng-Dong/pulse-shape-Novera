@@ -56,14 +56,14 @@ Not every term above needs to be optimized: BARQ's parameterization already
 satisfies some of them for free. Verified on fresh (un-optimized) random BARQ
 curves (3 seeds):
 
-| property | built in? | evidence (fresh BARQ) |
-|---|---|---|
-| **gate / rotation angle** (`F = 1`) | **YES** — point gate-fixing (PGF) hard-locks it for any parameters | TTC gate fidelity = 1.00000 |
-| **closure = 1st-order dephasing robustness** | **YES** — the curve is forced to start and end at the origin | closure `Ĉ ≡ 0`, endpoints at origin |
-| smooth pulse on/off (zero endpoint curvature) | **YES** — PGF vanishing-envelope condition | — |
-| **curve area = 2nd-order dephasing robustness** | **NO — must be in the cost** | `Ĉ ≈ 5e-3–1e-2` (varies with seed); only → 0 when `curve_zero_area` is weighted |
-| **tantrix area = amplitude / Rabi-drift robustness** | **NO — must be in the cost** | `Ĉ ≈ 2–6` (varies); step 8: 104 → 7.6e-5 only when weighted |
-| pulse energy / peak amplitude / leakage proxy | **NO — must be in the cost** | unconstrained; energy runs to ~2900× if never penalized |
+| property | built in? | how / why | evidence (fresh, un-optimized BARQ) |
+|---|:---:|---|---|
+| gate / rotation angle (`F = 1`) | ✅ | point gate-fixing (PGF) hard-locks it for any parameters | TTC gate fidelity = `1.00000` |
+| closure — 1st-order dephasing robustness | ✅ | curve forced closed (both endpoints at the origin) | closure `Ĉ ≡ 0` |
+| smooth pulse on / off (zero endpoint curvature) | ✅ | PGF vanishing-envelope condition | — |
+| curve area — 2nd-order dephasing robustness | ❌ | must be weighted in the cost | `Ĉ ≈ 5e-3 – 1e-2`; → 0 only when weighted |
+| tantrix area — amplitude / Rabi-drift robustness | ❌ | must be weighted in the cost | `Ĉ ≈ 2 – 6`; step 8: 104 → 7.6e-5 when weighted |
+| pulse energy / peak amplitude / leakage proxy | ❌ | must be weighted in the cost | unconstrained → energy runs to ~2900× if never penalized |
 
 So for BARQ, gate fidelity and 1st-order dephasing are **not tradeoffs** — they
 come for free. Weights only ever need to be spent on **2nd-order dephasing,
