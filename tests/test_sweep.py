@@ -56,3 +56,15 @@ def test_good_ansatz_no_free_lunch(reference):
     assert chat["closure"] < 1e-3, f"good closure Chat should be << 1, got {chat['closure']}"
     assert chat["curve_area"] < 1e-2, f"good curve_area Chat should be << 1, got {chat['curve_area']}"
     assert chat["energy"] > 1.0, f"good energy Chat should exceed naive, got {chat['energy']}"
+
+
+def test_seeded_barq_keeps_gate_and_robustness(reference):
+    # The step-11e linchpin: seeding the rcp good ansatz into BARQ must keep the
+    # gate exact (TTC fidelity ~ 1, via PGF) AND preserve its dephasing robustness.
+    from pulse_shape_novera.barq import barq_gate_fidelity
+    free = sweep.seed_free_points_from_curve(make_rcp_spacecurve("rcp_lemniscate", ANGLE))
+    barq = sweep.make_seeded_barq(free)
+    assert barq_gate_fidelity(barq) > 0.99, "seeded BARQ gate must stay exact (PGF)"
+    chat = sweep.evaluate_chat(barq, reference)
+    assert chat["curve_area"] < 1e-2, \
+        f"seeded good curve should stay dephasing-robust, got {chat['curve_area']}"

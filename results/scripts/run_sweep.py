@@ -1,25 +1,27 @@
-"""Step 11d -- ansatz-quality weight sweep (COMPUTE).
+"""Step 11f -- BARQ initialization-quality sweep (COMPUTE, one-shot).
 
-For each weight combination ``w`` we compare three routes to the X(pi) gate and
-record which minimizes the normalized cost ``C = sum_i w_i Chat_i``:
+Honest framing (see _dev_logs/step11d_sweep.md): BARQ's point gate-fixing keeps the
+gate exact but does NOT faithfully preserve a seeded ansatz -- it mangles the
+curve (e.g. rcp's energy inflates from 33x to ~600x), and can even invert the
+good/bad ordering. So this is NOT an ansatz-quality study. It asks a narrower,
+honest question:
 
-  * **good** -- rcp_lemniscate used as is (fixed; gate-correct + dephasing-robust),
-  * **naive** -- the open constant-amplitude arc used as is (fixed),
-  * **optimize** -- BARQ run under that same ``w`` (PGF keeps the gate exact).
+    Does WARM-STARTING BARQ from a simple geometric curve beat its random default?
 
-The good/naive costs are evaluated once (they are fixed curves); only BARQ is
-optimized per cell, so the whole sweep is cheap. See ``sweep.py`` for the
-normalization contract and why this replaced the earlier soft-gate design.
+Starting points, all seeded into BARQ (gate exact via PGF):
+  * 4 structured seeds -- rcp_lemniscate (good, closed) and three open arcs
+    (circle / triangle / gaussian);
+  * an ENSEMBLE of random BARQ defaults (5 seeds) -- the no-prior baseline as a
+    distribution, not a single (possibly unlucky) draw.
 
-Robustness floor: dephasing costs (closure, curve area) below ``DEPH_FLOOR`` are
-clamped -- a curve 1000x better-closed than the naive pulse is already perfectly
-dephasing-robust, and rewarding further (physically meaningless) reduction would
-let a machine-zero optimizer nominally "beat" an already-robust free ansatz.
+Energy weight is always >= 0.001: verified to prevent the pure-dephasing energy
+runaway (energy -> ~2900x, gate -> 0.95) and keep the gate exact -- this small
+always-on penalty is the physical realism floor.
 
-Outputs (retained, tracked): ``results/data/sweep_*.npz`` + ``.json``.
-Figures are produced separately by ``plot_sweep.py``.
+Records the full per-25-step history (cost, all Chat_i, control params) locally;
+a curated summary + control-solution library + figures go to results/.
 
-Run (background, ~10 min):
+Run (one-shot, ~15 min):
     conda run -n curve python results/scripts/run_sweep.py
 """
 
@@ -29,113 +31,141 @@ import os
 import numpy as np
 
 import pulse_shape_novera  # noqa: F401 -- applies qurveros patch
-from pulse_shape_novera import make_rcp_spacecurve, make_circle_arc_spacecurve
+from pulse_shape_novera import (make_rcp_spacecurve, make_circle_arc_spacecurve,
+                                 make_triangle_pulse_spacecurve, make_gaussian_arc_spacecurve)
 from pulse_shape_novera import sweep
+from pulse_shape_novera.barq import barq_gate_fidelity
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 DATA = os.path.join(HERE, "..", "data")
+HISTORY = os.path.join(ROOT, "_dev_logs", "sweep_history")
 ANGLE = np.pi
-BARQ_ITER = 900
+BARQ_ITER = 400
+CKPT = 25
 DEPH_FLOOR = 1e-3
-ROUTES = ["good (rcp, as is)", "naive (arc, as is)", "optimize (BARQ)"]
+ENSEMBLE_SEEDS = [101, 202, 303, 404, 505]
+
+STRUCTURED = {
+    "rcp (good, closed)": lambda: make_rcp_spacecurve("rcp_lemniscate", ANGLE),
+    "circle (open)":      lambda: make_circle_arc_spacecurve(ANGLE),
+    "triangle (open)":    lambda: make_triangle_pulse_spacecurve(ANGLE),
+    "gaussian (open)":    lambda: make_gaussian_arc_spacecurve(ANGLE),
+}
 
 reference = sweep.compute_references(make_circle_arc_spacecurve(ANGLE))
-GOOD_CHAT = sweep.evaluate_chat(make_rcp_spacecurve("rcp_lemniscate", ANGLE), reference)
-NAIVE_CHAT = sweep.evaluate_chat(make_circle_arc_spacecurve(ANGLE), reference)
 
 
-def _floored(chat):
-    """Clamp the dephasing terms at DEPH_FLOOR (robust-enough is robust-enough)."""
+def _floored_cost(chat, weights):
     c = dict(chat)
     for t in ("closure", "curve_area"):
         c[t] = max(c[t], DEPH_FLOOR)
-    return c
+    return sweep.total_cost(c, weights)
 
 
-def cost(chat, weights):
-    return sweep.total_cost(_floored(chat), weights)
+def build_structured_seeds():
+    return {name: sweep.seed_free_points_from_curve(factory())
+            for name, factory in STRUCTURED.items()}
 
 
-def weights_for(axis_x, vx, axis_y, vy, base):
-    """base weights overridden by two swept axes; 'dephasing' sets closure+curve_area."""
-    w = dict(base)
-    for axis, v in ((axis_x, vx), (axis_y, vy)):
-        if axis == "dephasing":
-            w["closure"] = w["curve_area"] = v
-        else:
-            w[axis] = v
-    return w
+def report_seeds(seeds):
+    """Log what each structured seed BECOMES inside BARQ (mangling is real)."""
+    print("=== structured seeds after entering BARQ (pre-optimization) ===")
+    for name, free in seeds.items():
+        b = sweep.make_seeded_barq(free); b.evaluate_frenet_dict(400)
+        chat = sweep.evaluate_chat(b, reference)
+        print(f"  {name:22s} gateF={barq_gate_fidelity(b):.4f} "
+              f"energy={chat['energy']:8.1f} curve_area={chat['curve_area']:.2e}", flush=True)
+    print()
 
 
-def run_grid(axis_x, xs, axis_y, ys, base, keep_traj_cells):
-    ny, nx = len(ys), len(xs)
-    winner = np.full((ny, nx), -1, dtype=int)
-    costs = {r: np.full((ny, nx), np.nan) for r in ("good", "naive", "barq")}
-    barq_chat = {t: np.full((ny, nx), np.nan) for t in sweep.INV_TERMS}
+def weights_for(vdeph, venergy):
+    return {"closure": vdeph, "curve_area": vdeph, "energy": venergy}
+
+
+def run_grid(name, deph_vals, energy_vals, struct_seeds, keep_traj_cells):
+    ny, nx = len(energy_vals), len(deph_vals)
+    ns, ne = len(struct_seeds), len(ENSEMBLE_SEEDS)
+    nfree = sweep.N_FREE_POINTS
+    ncheck = len(range(0, BARQ_ITER + 1, CKPT))
+    steps_axis = list(range(0, BARQ_ITER + 1, CKPT))
+    struct_names = list(struct_seeds.keys())
+
+    s_cost = np.full((ny, nx, ns), np.nan)
+    s_gate = np.full((ny, nx, ns), np.nan)
+    s_chat = {t: np.full((ny, nx, ns), np.nan) for t in sweep.INV_TERMS}
+    s_free = np.full((ny, nx, ns, nfree, 3), np.nan)
+    e_cost = np.full((ny, nx, ne), np.nan)
+    e_gate = np.full((ny, nx, ne), np.nan)
+    e_chat = {t: np.full((ny, nx, ne), np.nan) for t in sweep.INV_TERMS}
+    s_cost_hist = np.full((ny, nx, ns, ncheck), np.nan)
+    s_params_hist = np.full((ny, nx, ns, ncheck, nfree, 3), np.nan)
     traj = {}
 
-    for iy, vy in enumerate(ys):
-        for ix, vx in enumerate(xs):
-            w = weights_for(axis_x, vx, axis_y, vy, base)
-            bq = sweep.optimize_barq(w, reference, max_iter=BARQ_ITER, cost_fn=cost)
-            c_good = cost(GOOD_CHAT, w)
-            c_naive = cost(NAIVE_CHAT, w)
-            c_barq = cost(bq["final_chat"], w)
-            trio = [c_good, c_naive, c_barq]
-            winner[iy, ix] = int(np.argmin(trio))
-            costs["good"][iy, ix], costs["naive"][iy, ix], costs["barq"][iy, ix] = trio
-            for t in sweep.INV_TERMS:
-                barq_chat[t][iy, ix] = bq["final_chat"][t]
+    for iy, ve in enumerate(energy_vals):
+        for ix, vd in enumerate(deph_vals):
+            w = weights_for(vd, ve)
+            # structured seeds (full history)
+            s_runs = []
+            for k, free in enumerate(struct_seeds.values()):
+                r = sweep.optimize_barq(w, reference, init_free_points=free,
+                                        max_iter=BARQ_ITER, checkpoint_every=CKPT,
+                                        cost_fn=_floored_cost)
+                s_runs.append(r)
+                s_cost[iy, ix, k] = r["cost_history"][-1]
+                s_gate[iy, ix, k] = r["final_gate"]
+                for t in sweep.INV_TERMS:
+                    s_chat[t][iy, ix, k] = r["final_chat"][t]
+                s_cost_hist[iy, ix, k, :] = r["cost_history"]
+                s_params_hist[iy, ix, k, :, :, :] = np.stack(r["params_history"])
+                s_free[iy, ix, k] = r["final_free_points"]
+            # random-default ensemble (final only + trajectory for traj cells)
+            e_runs = []
+            for j, sd in enumerate(ENSEMBLE_SEEDS):
+                r = sweep.optimize_barq(w, reference, init_free_points=None, seed=sd,
+                                        max_iter=BARQ_ITER, checkpoint_every=CKPT,
+                                        cost_fn=_floored_cost)
+                e_runs.append(r)
+                e_cost[iy, ix, j] = r["cost_history"][-1]
+                e_gate[iy, ix, j] = r["final_gate"]
+                for t in sweep.INV_TERMS:
+                    e_chat[t][iy, ix, j] = r["final_chat"][t]
             if (ix, iy) in keep_traj_cells:
                 traj[f"{ix}_{iy}"] = {
-                    "vx": float(vx), "vy": float(vy),
-                    "steps": bq["steps"], "barq_cost": bq["cost_history"],
-                    "c_good": c_good, "c_naive": c_naive,
-                }
-            print(f"[{axis_y}={vy:g} x {axis_x}={vx:g}] winner={ROUTES[winner[iy, ix]]:20s} "
-                  f"| good={c_good:.3g} naive={c_naive:.3g} barq={c_barq:.3g}")
+                    "vdeph": float(vd), "venergy": float(ve),
+                    "steps": s_runs[0]["steps"],
+                    "struct_cost": [r["cost_history"] for r in s_runs],
+                    "ens_cost": [r["cost_history"] for r in e_runs]}
+            print(f"[energy={ve:g} deph={vd:g}] struct_final {np.round(s_cost[iy,ix],2)} "
+                  f"ens_final[min,med,max] "
+                  f"[{np.min(e_cost[iy,ix]):.2f},{np.median(e_cost[iy,ix]):.2f},{np.max(e_cost[iy,ix]):.2f}] "
+                  f"gate[min] s={np.min(s_gate[iy,ix]):.3f} e={np.min(e_gate[iy,ix]):.3f}", flush=True)
 
-    return {"axis_x": axis_x, "xs": list(map(float, xs)),
-            "axis_y": axis_y, "ys": list(map(float, ys)),
-            "winner": winner, "costs": costs, "barq_chat": barq_chat, "traj": traj}
-
-
-def save_grid(name, g):
-    arrays = {"winner": g["winner"]}
-    for r, arr in g["costs"].items():
-        arrays[f"cost_{r}"] = arr
-    for t, arr in g["barq_chat"].items():
-        arrays[f"barq_{t}"] = arr
-    np.savez_compressed(os.path.join(DATA, f"sweep_{name}.npz"), **arrays)
-    meta = {k: g[k] for k in ("axis_x", "xs", "axis_y", "ys")}
-    meta.update(routes=ROUTES, deph_floor=DEPH_FLOOR, barq_iter=BARQ_ITER,
-                references=reference["refs"], good_chat=GOOD_CHAT, naive_chat=NAIVE_CHAT,
-                traj=g["traj"])
+    summary = {"struct_final_cost": s_cost, "struct_gate": s_gate, "struct_free_points": s_free,
+               "ens_final_cost": e_cost, "ens_gate": e_gate}
+    for t in sweep.INV_TERMS:
+        summary[f"struct_chat_{t}"] = s_chat[t]
+        summary[f"ens_chat_{t}"] = e_chat[t]
+    np.savez_compressed(os.path.join(DATA, f"sweep_{name}.npz"), **summary)
+    meta = {"deph_vals": list(map(float, deph_vals)), "energy_vals": list(map(float, energy_vals)),
+            "struct_names": struct_names, "n_ensemble": ne, "ensemble_seeds": ENSEMBLE_SEEDS,
+            "barq_iter": BARQ_ITER, "ckpt": CKPT, "n_free_points": nfree,
+            "references": reference["refs"], "steps_axis": steps_axis, "traj": traj}
     with open(os.path.join(DATA, f"sweep_{name}.json"), "w") as f:
         json.dump(meta, f, indent=2)
-    print(f"saved sweep_{name}.npz / .json")
+    hist = {"struct_cost_hist": s_cost_hist, "struct_params_hist": s_params_hist,
+            "steps_axis": np.array(steps_axis)}
+    np.savez_compressed(os.path.join(HISTORY, f"{name}_history.npz"), **hist)
+    print(f"saved sweep_{name} (curated + history)", flush=True)
 
 
 if __name__ == "__main__":
-    w_deph = [0.1, 0.3, 1.0, 3.0, 10.0, 30.0]     # 6
-    w_energy = [0.0, 0.03, 0.1, 0.3, 1.0]         # 5
-    w_tantrix = [0.0, 0.1, 0.3, 1.0]              # 4
-    w_maxamp = [0.0, 0.03, 0.1, 0.3]              # 4
-
-    # MAIN: dephasing x energy. Keep trajectory cells: dephasing-dominated,
-    # balanced/mixed, energy-dominated.
-    main = run_grid("dephasing", w_deph, "energy", w_energy,
-                    base={}, keep_traj_cells={(5, 0), (3, 2), (1, 4)})
-    save_grid("main", main)
-
-    # SLICE1: tantrix x energy at fixed dephasing weight = 1.
-    s1 = run_grid("tantrix", w_tantrix, "energy", w_energy,
-                  base={"closure": 1.0, "curve_area": 1.0}, keep_traj_cells=set())
-    save_grid("tantrix_energy", s1)
-
-    # SLICE2: max_amp x energy at fixed dephasing weight = 1.
-    s2 = run_grid("max_amp", w_maxamp, "energy", w_energy,
-                  base={"closure": 1.0, "curve_area": 1.0}, keep_traj_cells=set())
-    save_grid("maxamp_energy", s2)
-
-    print("ALL DONE")
+    os.makedirs(DATA, exist_ok=True)
+    os.makedirs(HISTORY, exist_ok=True)
+    seeds = build_structured_seeds()
+    report_seeds(seeds)
+    deph_vals = [0.3, 1.0, 3.0]
+    energy_vals = [0.001, 0.01, 0.1]
+    run_grid("initquality", deph_vals, energy_vals, seeds,
+             keep_traj_cells={(2, 0), (2, 2)})   # (deph=3,energy=0.001) and (deph=3,energy=0.1)
+    print("ALL DONE", flush=True)

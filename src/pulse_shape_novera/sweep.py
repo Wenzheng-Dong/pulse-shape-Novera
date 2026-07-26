@@ -49,9 +49,11 @@ from qurveros import losses, frametools, barqtools
 from qurveros.optspacecurve import BarqCurve
 
 from pulse_shape_novera.proxies import pulse_energy_loss
-from pulse_shape_novera.barq import make_barq_xgate, xgate_pgf_mod
+from pulse_shape_novera.barq import make_barq_xgate, xgate_pgf_mod, barq_gate_fidelity
+from pulse_shape_novera.bezier import fit_bezier_control_points
 
 N_FRENET = 400    # Frenet sampling resolution
+N_FREE_POINTS = 14   # BARQ free points; internal block (n-2) carries the seeded shape
 
 
 # --- scale-invariant cost terms ------------------------------------------------
@@ -110,36 +112,77 @@ def total_cost(chat, weights):
     return sum(float(weights.get(name, 0.0)) * chat[name] for name in INV_TERMS)
 
 
-# --- the "optimize" arm: BARQ under a normalized weighted objective ------------
+# --- BARQ seeding: inject an ansatz curve as the optimizer's initial point -----
+def seed_free_points_from_curve(spacecurve, *, n_free_points=N_FREE_POINTS,
+                                n_frenet=600):
+    """Fit an ansatz curve to BARQ ``free_points`` so BARQ starts *at* that ansatz.
+
+    BARQ builds its Bezier control points as
+    ``[0, gate_fix[:3], free_points[2:], gate_fix[3:], 0]`` -- the internal control
+    points ARE ``free_points[2:]`` and PGF derives the gate-fixing points from
+    ``free_points[:2]`` (keeping the gate exact for any values). We therefore fit
+    the ansatz to a degree ``n_free_points+5`` Bezier curve and read the internal
+    block straight into ``free_points[2:]`` (with the two near-boundary points
+    seeding ``free_points[:2]``). The resulting BARQ curve starts close to the
+    ansatz in shape, with the gate exact by construction.
+    """
+    spacecurve.evaluate_frenet_dict(n_frenet)
+    pos = np.asarray(spacecurve.frenet_dict["curve"])
+    x = np.asarray(spacecurve.frenet_dict["x_values"])
+    degree = n_free_points + 5
+    W = np.asarray(fit_bezier_control_points(pos, degree, param=x))  # (n_free+6, 3)
+    internal = W[4:4 + (n_free_points - 2)]              # the shape-carrying block
+    return np.vstack([W[1:3], internal])                # (n_free_points, 3)
+
+
+def make_seeded_barq(init_free_points=None, *, n_free_points=N_FREE_POINTS,
+                     seed=4531469, norm_value=0.25):
+    """Build a BARQ X-gate curve, optionally seeded at a given ``free_points``.
+
+    ``init_free_points=None`` -> BARQ's own random init (the no-prior baseline).
+    """
+    barq = BarqCurve(adj_target=quantum_x_adj(), n_free_points=n_free_points,
+                     pgf_mod=xgate_pgf_mod)
+    init_pgf = barqtools.get_default_pgf_params_dict()
+    init_pgf["norm_value"] = norm_value
+    if init_free_points is None:
+        barq.initialize_parameters(seed=seed, init_pgf_params=init_pgf)
+    else:
+        barq.initialize_parameters(init_free_points=jnp.asarray(init_free_points),
+                                   init_pgf_params=init_pgf)
+    return barq
+
+
+# --- the optimizer arm: BARQ (PGF, gate exact) under a normalized objective ----
+# Note on the gate: BARQ's gate lives in its TTC control mode; the Frenet-frame
+# adjoint gives a frame-convention value (1/3 for X), NOT the gate. Use
+# ``barq_gate_fidelity`` (TTC + simulator) for the actual gate. PGF fixes it
+# exactly, so we verify it once at the optimum rather than per checkpoint.
 def _normalized(fn, ref):
     return lambda fd: fn(fd) / ref
 
 
-def optimize_barq(weights, reference, *, max_iter=1200, lr=1e-3,
-                  n_free_points=10, seed=4531469, norm_value=0.25,
-                  checkpoint_every=50, n_frenet=N_FRENET, cost_fn=None):
-    """Run BARQ (PGF, gate exact) minimizing ``sum_i w_i * Chat_i`` and log history.
+def optimize_barq(weights, reference, *, init_free_points=None,
+                  max_iter=1200, lr=1e-3, n_free_points=N_FREE_POINTS,
+                  seed=4531469, norm_value=0.25, checkpoint_every=25,
+                  n_frenet=N_FRENET, cost_fn=None):
+    """Optimize a (optionally seeded) BARQ curve under ``sum_i w_i Chat_i``.
 
-    ``cost_fn(chat, weights)`` (default :func:`total_cost`) computes the total cost
-    recorded in ``cost_history`` -- pass the caller's cost (e.g. one that applies a
-    robustness floor) so the logged trajectory matches the decision metric.
+    ``cost_fn(chat, weights)`` (default :func:`total_cost`) computes the logged
+    total cost. Records the FULL per-checkpoint history so the run can later serve
+    as a ready-to-use control solution.
 
-    Returns
-    -------
-    dict with:
-        ``final_chat``   : {term: Chat_i} at the optimum,
-        ``steps``        : checkpoint step indices,
-        ``cost_history`` : total cost (via ``cost_fn``) at each checkpoint,
-        ``gate_locked``  : True (PGF fixes the gate exactly by construction).
+    Returns a dict with, at each of ``steps`` checkpoints:
+        ``cost_history``   : total cost (via ``cost_fn``),
+        ``chat_history``   : {term: [Chat_i per checkpoint]},
+        ``params_history`` : list of ``free_points`` arrays (the control solution),
+    plus ``final_chat``, ``final_free_points``, and ``final_gate`` (TTC fidelity;
+    PGF keeps it ~1, verified once at the optimum).
     """
     if cost_fn is None:
         cost_fn = total_cost
-    adj_target = quantum_x_adj()
-    barq = BarqCurve(adj_target=adj_target, n_free_points=n_free_points,
-                     pgf_mod=xgate_pgf_mod)
-    init_pgf = barqtools.get_default_pgf_params_dict()
-    init_pgf["norm_value"] = norm_value
-    barq.initialize_parameters(seed=seed, init_pgf_params=init_pgf)
+    barq = make_seeded_barq(init_free_points, n_free_points=n_free_points,
+                            seed=seed, norm_value=norm_value)
 
     refs = reference["refs"]
     terms = [[_normalized(INV_TERMS[name], refs[name]), float(w)]
@@ -159,17 +202,23 @@ def optimize_barq(weights, reference, *, max_iter=1200, lr=1e-3,
     steps = list(range(0, len(hist), checkpoint_every))
     if steps[-1] != len(hist) - 1:
         steps.append(len(hist) - 1)
-    cost_history = []
+    cost_history, params_history = [], []
+    chat_history = {name: [] for name in INV_TERMS}
     for k in steps:
         barq.update_params_from_opt_history(k)
         barq.evaluate_frenet_dict(n_frenet)
-        chat = {name: float(fn(barq.frenet_dict)) / refs[name]
-                for name, fn in INV_TERMS.items()}
+        fd = barq.frenet_dict
+        chat = {name: float(fn(fd)) / refs[name] for name, fn in INV_TERMS.items()}
+        for name in INV_TERMS:
+            chat_history[name].append(chat[name])
         cost_history.append(cost_fn(chat, weights))
-    final_chat = {name: float(fn(barq.frenet_dict)) / refs[name]
-                  for name, fn in INV_TERMS.items()}
-    return {"final_chat": final_chat, "steps": steps,
-            "cost_history": cost_history, "gate_locked": True}
+        params_history.append(np.asarray(barq.params["free_points"]))
+    final_chat = {name: chat_history[name][-1] for name in INV_TERMS}
+    final_gate = barq_gate_fidelity(barq)   # TTC-mode fidelity; PGF keeps it ~1
+    return {"steps": steps, "cost_history": cost_history,
+            "chat_history": chat_history, "params_history": params_history,
+            "final_chat": final_chat, "final_free_points": params_history[-1],
+            "final_gate": final_gate}
 
 
 def quantum_x_adj():
