@@ -33,6 +33,25 @@ scratch.
 Cost vs optimization step from the four structured warm-starts and the random
 ensemble (shaded band), in two regimes (dephasing-dominated and energy-weighted).
 
+## fig3_waveform_evolution.png — the control pulse, start → middle → end
+
+The geometric control waveform — drive amplitude Ω(t) (= curvature) and drive
+phase Φ(t) — for each structured warm-start at the start (gray), middle (orange)
+and end (blue) of optimization, at one weight regime. The starts show large
+boundary spikes in Ω (an artifact of BARQ's forced-closure + gate-fixing points —
+this is the energy inflation), which the optimizer smooths away. Rebuilt from the
+saved control-parameter history; the random ensemble is omitted (too arbitrary).
+
+## fig4_radar_cost_profile.png — multi-metric profile per weight regime
+
+One radar (spider) chart per weight regime. Axes are the cost metrics (gate
+infidelity, 1st-/2nd-order dephasing, amplitude error, pulse energy, peak
+amplitude), each normalized within the regime across the four warm-starts so that
+**best = center, worst = edge; a smaller polygon = a better all-round solution.**
+The closed rcp warm-start (green) balloons out on pulse energy / peak amplitude /
+amplitude error in every regime — it is the worst warm-start on the physical-cost
+axes — while the open arcs stay compact.
+
 ---
 *Data: `../data/sweep_initquality.{npz,json}` — per-cell final cost, final
 normalized costs, final gate fidelity (qutip), and optimized control parameters
