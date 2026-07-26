@@ -1,48 +1,40 @@
-# Figures — ansatz-quality weight sweep
+# Figures — BARQ warm-start quality
 
-These figures ask, for a single-qubit X(π) gate, **which route to the gate is
-best across different design priorities**: use a good geometric prior (a closed,
-zero-area curve) as is, use the naive constant-amplitude pulse as is, or run a
-no-prior optimizer (BARQ). The priorities are encoded as weights on a normalized
-cost `C = Σ_i w_i · Ĉ_i`; see `../README.md` for the cost terms and normalization.
+For a single-qubit X(π) gate, the same robustness objective `C = Σ_i w_i · Ĉ_i`
+is optimized from several **warm-starts**, all with the gate held exact by BARQ's
+point gate-fixing:
 
-All three routes produce an **exact** gate (the good/naive curves by
-construction; BARQ via point gate-fixing), so the comparison is purely about
-robustness and pulse cost.
+- four **structured** seeds — `rcp_lemniscate` (closed) and three open arcs
+  (`circle`, `triangle`, `gaussian`), each seeded into BARQ;
+- a **random-default ensemble** (5 random BARQ inits) — the no-prior baseline as
+  a distribution.
+
+Energy weight is always ≥ 0.001 (a physical floor that prevents the
+pure-dephasing energy runaway). See `../README.md` for the cost terms and the
+important honest caveat: BARQ mangles a seeded curve, so this is **warm-start
+quality**, not ansatz quality.
 
 Reproduce from a clean clone:
 
 ```bash
-conda run -n curve python results/scripts/run_sweep.py    # compute -> results/data/*.npz,*.json
-conda run -n curve python results/scripts/plot_sweep.py   # data     -> results/figures/*.png
+conda run -n curve python results/scripts/run_sweep.py    # optimize -> data/ (+ local full history)
+conda run -n curve python results/scripts/plot_sweep.py   # data     -> figures/
 ```
 
-(`run_sweep.py` optimizes only the BARQ arm per weight cell — the good/naive
-curves are fixed — so it is fast, ~10 min. `plot_sweep.py` only reads saved data.)
+## fig1_warmstart_vs_random.png — which start reaches the best solution
 
-## fig1_winner_map.png — best route across weight regimes
+For each weight regime, the final optimized cost of each structured warm-start
+(colored markers) against the random-default ensemble (gray band = min–max, tick
+= median). A marker below the band means that warm-start beats optimizing from
+scratch.
 
-Three phase diagrams over weight combinations. Each cell is colored by the route
-with the lowest cost:
+## fig2_convergence.png — convergence traces
 
-- **use good ansatz (free)** — wins where **dephasing robustness dominates**: the
-  good curve is already robust and needs no optimization.
-- **use naive pulse (free)** — wins where **low pulse energy / low peak amplitude
-  dominates** and robustness is weighted lightly: the plain pulse is cheapest.
-- **run optimizer** — wins the **mixed middle**, where you need both robustness
-  and a moderate pulse cost and neither ready-made curve is good enough.
-
-Panels: dephasing-vs-energy (main), amplitude-error-vs-energy, peak-amplitude-vs-energy.
-
-## fig2_when_to_optimize.png — is optimizing worth it?
-
-In three weight regimes, the optimizer's cost vs step (solid), with the two
-ready-made curves as horizontal lines (dashed). Where the good-ansatz line sits
-below the optimizer's whole trajectory, you should just grab it; where the
-optimizer descends below both lines, optimizing pays off.
+Cost vs optimization step from the four structured warm-starts and the random
+ensemble (shaded band), in two regimes (dephasing-dominated and energy-weighted).
 
 ---
-*Data: `../data/sweep_main.{npz,json}`, `sweep_tantrix_energy.*`,
-`sweep_maxamp_energy.*` — each stores the per-cell winner, the three route costs,
-the BARQ optimum's normalized cost vector, and a few BARQ cost trajectories, plus
-the fixed good/naive cost vectors and references in the JSON.*
+*Data: `../data/sweep_initquality.{npz,json}` — per-cell final cost, final
+normalized costs, final gate fidelity (qutip), and optimized control parameters
+(`struct_free_points`) for every warm-start; a few convergence traces in the
+JSON. Full per-25-step history is in `_dev_logs/sweep_history/` (untracked).*

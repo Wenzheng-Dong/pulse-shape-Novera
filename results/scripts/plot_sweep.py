@@ -1,20 +1,19 @@
-"""Step 11d -- render the curated ansatz-quality figures from swept data (PLOT).
+"""Step 11f -- render BARQ initialization-quality figures from swept data (PLOT).
 
-Reads ``results/data/`` (from ``run_sweep.py``) and writes two outsider-legible
-figures to ``results/figures/``. No optimization here, so figures re-render fast.
+Reads results/data/ and writes two outsider-legible figures to results/figures/.
 
-  fig1_winner_map.png
-      Three phase diagrams over weight combinations. Each cell is colored by the
-      best route to the gate: use the good ansatz as is, use the naive pulse as
-      is, or run the optimizer. Good wins where dephasing robustness dominates;
-      the naive pulse wins where low energy / low peak dominates and robustness
-      is cheap; optimization wins the mixed middle where no ready-made curve is
-      good enough.
+  fig1_warmstart_vs_random.png
+      Final optimized cost from each structured warm-start (rcp / circle /
+      triangle / gaussian, seeded into BARQ) vs the random-default ensemble
+      (gray band = min-max, tick = median), across weight regimes. Shows which
+      starting point BARQ reaches the best solution from.
 
-  fig2_when_to_optimize.png
-      In three weight regimes, the optimizer's cost vs step, with the two
-      ready-made curves as horizontal lines. Shows whether (and after how many
-      steps) optimizing beats simply grabbing the good or the naive pulse.
+  fig2_convergence.png
+      Cost vs optimization step from the four structured warm-starts and the
+      random ensemble (band), in two regimes.
+
+Note (honest): BARQ mangles a seeded curve (it does not preserve the ansatz), so
+this compares WARM-START quality, not ansatz quality. See ../README.md.
 """
 
 import json
@@ -23,24 +22,14 @@ import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
-from matplotlib.patches import Patch
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "..", "data")
 FIGS = os.path.join(HERE, "..", "figures")
 
-# 0 = good ansatz, 1 = naive pulse, 2 = optimize (BARQ).
-ROUTE_COLORS = ["#2ca02c", "#ff7f0e", "#1f77b4"]
-ROUTE_LABELS = ["use good ansatz (free)", "use naive pulse (free)", "run optimizer"]
-
-AXIS_NAME = {
-    "dephasing": "dephasing-robustness weight",
-    "energy": "pulse-energy weight  (leakage proxy)",
-    "tantrix": "amplitude-error-robustness weight",
-    "max_amp": "peak-amplitude weight",
-}
+STRUCT_COLORS = ["#2ca02c", "#ff7f0e", "#9467bd", "#8c564b"]  # rcp, circle, triangle, gaussian
+ENS_COLOR = "#7f7f7f"
 
 
 def _load(name):
@@ -49,65 +38,82 @@ def _load(name):
     return d, meta
 
 
-def draw_winner(ax, name, title):
-    d, meta = _load(name)
-    win = d["winner"]
-    xs, ys = meta["xs"], meta["ys"]
-    ax.pcolormesh(np.arange(len(xs) + 1), np.arange(len(ys) + 1), win,
-                  cmap=ListedColormap(ROUTE_COLORS), vmin=0, vmax=2,
-                  edgecolors="white", linewidth=0.6)
-    ax.set_xticks(np.arange(len(xs)) + 0.5); ax.set_xticklabels([f"{v:g}" for v in xs], fontsize=8)
-    ax.set_yticks(np.arange(len(ys)) + 0.5); ax.set_yticklabels([f"{v:g}" for v in ys], fontsize=8)
-    ax.set_xlabel(AXIS_NAME.get(meta["axis_x"], meta["axis_x"]), fontsize=9)
-    ax.set_ylabel(AXIS_NAME.get(meta["axis_y"], meta["axis_y"]), fontsize=9)
-    ax.set_title(title, fontsize=10)
+def fig_warmstart_vs_random():
+    d, meta = _load("initquality")
+    sc = d["struct_final_cost"]   # [ny(energy), nx(deph), ns]
+    ec = d["ens_final_cost"]      # [ny, nx, ne]
+    sg = d["struct_gate"]         # [ny, nx, ns]  physical (TTC) gate fidelity
+    dvals, evals = meta["deph_vals"], meta["energy_vals"]
+    names = meta["struct_names"]
+    ny, nx, ns = sc.shape
+
+    combos = [(iy, ix) for iy in range(ny) for ix in range(nx)]
+    fig, ax = plt.subplots(figsize=(13, 5))
+    xpos = np.arange(len(combos))
+    for c, (iy, ix) in enumerate(combos):
+        # ensemble range (min-max) + median
+        lo, md, hi = ec[iy, ix].min(), np.median(ec[iy, ix]), ec[iy, ix].max()
+        ax.vlines(c, lo, hi, color=ENS_COLOR, lw=6, alpha=0.35,
+                  label="random default (ensemble min-max)" if c == 0 else None)
+        ax.plot(c, md, "_", color=ENS_COLOR, ms=14, mew=2,
+                label="random default (median)" if c == 0 else None)
+        # structured warm-starts; filled = physical gate F>=0.99, hollow x = gate deficient
+        for k in range(ns):
+            gate_ok = sg[iy, ix, k] >= 0.99
+            ax.plot(c + (k - 1.5) * 0.12, sc[iy, ix, k],
+                    "o" if gate_ok else "x", ms=7 if gate_ok else 8,
+                    mfc=STRUCT_COLORS[k] if gate_ok else "none",
+                    mec=STRUCT_COLORS[k], color=STRUCT_COLORS[k],
+                    label=names[k] if c == 0 else None)
+    # legend note for the hollow-x convention
+    ax.plot([], [], "x", color="k", label="(hollow ×: physical gate F<0.99 — not a valid gate)")
+    ax.set_yscale("log")
+    ax.set_xticks(xpos)
+    ax.set_xticklabels([f"deph={dvals[ix]:g}\nenergy={evals[iy]:g}" for (iy, ix) in combos],
+                       fontsize=7)
+    ax.set_ylabel("final optimized cost  (lower = better)", fontsize=10)
+    ax.set_xlabel("weight regime", fontsize=10)
+    ax.legend(fontsize=8, ncol=3, loc="upper left")
+    ax.grid(alpha=0.3, axis="y", which="both")
+    ax.set_title("Warm-starting BARQ from a simple pulse vs its random default\n"
+                 "(where a marker sits below the gray band, that warm-start beats "
+                 "optimizing from scratch)", fontsize=11)
+    fig.tight_layout()
+    out = os.path.join(FIGS, "fig1_warmstart_vs_random.png")
+    fig.savefig(out, dpi=140); print("saved", out)
 
 
-def fig_winner_maps():
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.6))
-    draw_winner(axes[0], "main", "Dephasing vs pulse energy")
-    draw_winner(axes[1], "tantrix_energy", "Amplitude-error vs pulse energy")
-    draw_winner(axes[2], "maxamp_energy", "Peak amplitude vs pulse energy")
-    fig.legend(handles=[Patch(color=c, label=l) for c, l in zip(ROUTE_COLORS, ROUTE_LABELS)],
-               loc="lower center", ncol=3, frameon=False, fontsize=10,
-               bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Best route to the gate across weight regimes\n(the good geometric "
-                 "prior is the right free choice only where dephasing robustness "
-                 "dominates)", fontsize=11)
-    fig.tight_layout(rect=[0, 0.05, 1, 1])
-    out = os.path.join(FIGS, "fig1_winner_map.png")
-    fig.savefig(out, dpi=140, bbox_inches="tight"); print("saved", out)
-
-
-def fig_when_to_optimize():
-    _, meta = _load("main")
+def fig_convergence():
+    _, meta = _load("initquality")
     traj = meta["traj"]
-    keys = sorted(traj.keys(), key=lambda k: (traj[k]["vy"], traj[k]["vx"]))
-    fig, axes = plt.subplots(1, len(keys), figsize=(5 * len(keys), 4.3), sharey=False)
+    names = meta["struct_names"]
+    keys = sorted(traj.keys(), key=lambda k: (traj[k]["venergy"], traj[k]["vdeph"]))
+    fig, axes = plt.subplots(1, len(keys), figsize=(6 * len(keys), 4.4), sharey=False)
     if len(keys) == 1:
         axes = [axes]
     for ax, key in zip(axes, keys):
         t = traj[key]
-        ax.semilogy(t["steps"], np.maximum(t["barq_cost"], 1e-12), "-", color=ROUTE_COLORS[2],
-                    lw=2, label="run optimizer (BARQ)")
-        ax.axhline(max(t["c_good"], 1e-12), color=ROUTE_COLORS[0], ls="--", lw=1.8,
-                   label="use good ansatz (free)")
-        ax.axhline(max(t["c_naive"], 1e-12), color=ROUTE_COLORS[1], ls="--", lw=1.8,
-                   label="use naive pulse (free)")
-        ax.set_title(f"dephasing wt = {t['vx']:g},  energy wt = {t['vy']:g}", fontsize=10)
+        steps = t["steps"]
+        ens = np.array(t["ens_cost"])   # [ne, ncheck]
+        ax.fill_between(steps, ens.min(0), ens.max(0), color=ENS_COLOR, alpha=0.25,
+                        label="random default (ensemble)")
+        for k, cost in enumerate(t["struct_cost"]):
+            ax.semilogy(steps, np.maximum(cost, 1e-12), "-", color=STRUCT_COLORS[k],
+                        lw=1.8, label=names[k])
+        ax.set_title(f"dephasing wt = {t['vdeph']:g},  energy wt = {t['venergy']:g}", fontsize=10)
         ax.set_xlabel("optimization step", fontsize=9)
         ax.grid(alpha=0.3, which="both")
     axes[0].set_ylabel("total weighted cost  (lower = better)", fontsize=9)
     axes[0].legend(fontsize=8, loc="best")
-    fig.suptitle("When is optimizing worth it? Optimizer cost vs the two ready-made "
-                 "curves\n(dephasing-dominated: the good ansatz already wins for free; "
-                 "mixed: optimizing pays off)", fontsize=11)
+    fig.suptitle("Convergence from four structured warm-starts vs the random-default "
+                 "ensemble\n(rcp & circle keep the physical gate exact; triangle/gaussian "
+                 "degrade in energy-weighted regimes — see fig1)", fontsize=11)
     fig.tight_layout()
-    out = os.path.join(FIGS, "fig2_when_to_optimize.png")
+    out = os.path.join(FIGS, "fig2_convergence.png")
     fig.savefig(out, dpi=140); print("saved", out)
 
 
 if __name__ == "__main__":
-    fig_winner_maps()
-    fig_when_to_optimize()
+    fig_warmstart_vs_random()
+    fig_convergence()
     print("PLOTS DONE")
