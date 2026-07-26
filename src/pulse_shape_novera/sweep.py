@@ -1,213 +1,178 @@
-"""Systematic weight-sweep machinery for the ansatz-quality study (step 11d).
+"""Weight-sweep machinery for the ansatz-quality study (step 11d).
 
-We compare three initializations -- a *good* ansatz (closed, zero-area, native
-gate), a *bad* ansatz (open arc), and a no-prior BARQ-default -- optimized under
-the same objective
+We ask, across a grid of weight combinations ``w_i``, which of three routes to a
+single-qubit gate minimizes the normalized cost ``C = sum_i w_i * Chat_i``:
 
-    C(curve) = sum_i  w_i * Chat_i ,   Chat_i = C_i / C_i^ref ,
+  * **good ansatz** -- the closed, zero-area rcp_lemniscate curve, used *as is*
+    (already gate-correct and dephasing-robust; the whole point of a good prior
+    is that you don't optimize it);
+  * **naive / bad ansatz** -- the open constant-amplitude arc, used *as is*
+    (implements the gate but is not robust);
+  * **optimize (BARQ)** -- the no-prior automated optimizer, run under that same
+    ``w``; its gate is hard-fixed by point gate-fixing (PGF), so ``F == 1`` and
+    optimization only shapes robustness.
 
-over a grid of weight combinations ``w_i``. See ``results/README.md`` for the
-cost-term table and the normalization contract; the short version:
+The winner map therefore reads as a decision: *grab the good ansatz for free*,
+*grab the naive pulse for free*, or *you must run the optimizer*.
 
-* **Fair reference.** ``C_i^ref`` is the value of term ``i`` on the *naive
-  pulse* -- the constant-amplitude resonant arc of area ``theta`` that implements
-  ``X(theta)`` (a semicircle for ``X(pi)``). It is a fixed fourth curve, scored
-  identically for all three candidates, so nobody sits at ``Chat_i = 1`` by
-  construction. The naive arc is open and encloses area, so every ``C_i^ref`` is
-  finite and nonzero (no division by zero). Gate error is the exception: the
-  naive pulse realizes the gate, so it uses a fixed tolerance ``eps_ref``.
+Normalization contract (see ``results/README.md``):
 
-* **Scale gauge.** Closure, curve area and pulse energy are *not* scale
-  invariant, so a bare comparison across curves of different length is
-  meaningless. We freeze the gauge with a soft anchor ``(T_g - T_g^ref)^2`` (not
-  a swept term) that pins every curve to the naive pulse's gate time ``T_g^ref``.
-  With the gauge fixed, all ``C_i`` are directly comparable.
+* **Fair reference.** ``Chat_i = C_i / C_i^ref`` with ``C_i^ref`` = the term on
+  the *naive pulse* (the constant-amplitude arc of area ``theta`` implementing
+  ``X(theta)``). It is a fixed fourth curve scored identically for everyone, so
+  no candidate sits at ``Chat_i = 1`` by construction; it is open and encloses
+  area, so every ``C_i^ref`` is finite and nonzero.
 
-* **Gate lock.** ``1 - F`` carries a large fixed weight (``W_GATE``) so ``F ~ 1``
-  throughout; the gate is a constraint, not an importance knob (cf. step 11b,
-  where too small a gate weight let the gate drift).
+* **Scale invariance instead of a scale anchor.** Closure, curve area and pulse
+  energy are not scale invariant on their own, so comparing curves of different
+  arc length ``L`` would be meaningless. We use their scale-*invariant* forms
+  (divide by the appropriate power of ``L``), so every curve -- good, naive, and
+  BARQ (whose ``L`` differs) -- is compared on equal footing with no gauge
+  fixing. At ``L = 1`` (the naive pulse) the invariant forms equal the raw ones,
+  so the references keep their clean analytic values (energy ``pi^2``,
+  ``max_amp`` ``pi``).
 
-The reusable pieces (cost terms, references, single optimization run) live here;
-the grid orchestration and figures live in the tracked ``results/`` scripts.
+Historical note: an earlier design optimized all three inits in a common raw
+Bezier space under a soft gate penalty. It was abandoned -- the raw-Bezier
+optimizer falls into degenerate wrong-gate minima that no finite gate weight
+prevents (see ``_dev_logs/step11d_sweep.md``). BARQ's PGF is the only mechanism
+that keeps the gate exact under optimization, hence the design above.
 """
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 import optax
 import qutip
 
-from qurveros.optspacecurve import OptimizableSpaceCurve
-from qurveros.beziertools import bezier_curve_vec
-from qurveros import losses, frametools
-from qurveros.qubit_bench import quantumtools
+from qurveros import losses, frametools, barqtools
+from qurveros.optspacecurve import BarqCurve
 
 from pulse_shape_novera.proxies import pulse_energy_loss
+from pulse_shape_novera.barq import make_barq_xgate, xgate_pgf_mod
 
-# --- fixed knobs (gauge fixers, not swept) -------------------------------------
-W_GATE = 50.0     # gate-lock weight (holds F ~ 1; matches step 11b)
-W_SCALE = 5.0     # scale-anchor weight (holds T_g ~ T_g^ref)
-EPS_REF = 1e-4    # gate-error reference: Chat_gate = 1 at 99.99% fidelity
-BEZIER_DEGREE = 15
 N_FRENET = 400    # Frenet sampling resolution
 
 
-# --- cost terms ----------------------------------------------------------------
-def closure_loss(frenet_dict):
-    """Squared endpoint gap ``|r(T) - r(0)|^2`` (1st-order dephasing robustness).
+# --- scale-invariant cost terms ------------------------------------------------
+# Each returns a scale-invariant functional of the curve (frenet_dict), so curves
+# of different arc length L are directly comparable. At L = 1 these equal the raw
+# qurveros losses.
+def _length(frenet_dict):
+    return frametools.calculate_total_length(frenet_dict)
 
-    qurveros ships a curve *area* loss but not a closure loss; a closed curve is
-    the geometric condition for first-order static-dephasing robustness.
-    """
+
+def closure_term(frenet_dict):
+    """Fractional squared endpoint gap ``|r(T)-r(0)|^2 / L^2`` (1st-order dephasing)."""
     curve = frenet_dict["curve"]
-    return jnp.sum((curve[-1] - curve[0]) ** 2)
+    return jnp.sum((curve[-1] - curve[0]) ** 2) / _length(frenet_dict) ** 2
 
 
-def _adj_target(target_gate):
-    """Adjoint (SO(3)) representation of the target single-qubit gate."""
-    return quantumtools.calculate_adj_rep(target_gate)
+def curve_area_term(frenet_dict):
+    """Scale-invariant squared enclosed area ``(area/L^2)^2`` (2nd-order dephasing)."""
+    return losses.curve_zero_area_loss(frenet_dict) / _length(frenet_dict) ** 4
 
 
-def make_gate_infidelity(target_gate):
-    """Return ``fd -> 1 - F_avg`` against ``target_gate`` (adjoint fidelity)."""
-    adj = _adj_target(target_gate)
-
-    def gate_infidelity(frenet_dict):
-        frame_gate = frametools.calculate_frenet_adj(frenet_dict, 0.0)
-        return 1.0 - frametools.calculate_adj_fidelity(frame_gate, adj)
-
-    return gate_infidelity
+def energy_term(frenet_dict):
+    """Scale-invariant pulse energy ``L * integral Omega^2 dt`` (leakage proxy)."""
+    return pulse_energy_loss(frenet_dict) * _length(frenet_dict)
 
 
-def make_scale_anchor(tg_ref):
-    """Return ``fd -> (T_g - tg_ref)^2`` -- the soft gauge-fixer."""
-    def scale_anchor(frenet_dict):
-        return (frametools.calculate_total_length(frenet_dict) - tg_ref) ** 2
-
-    return scale_anchor
-
-
-# Swept cost terms: name -> raw loss functional C_i(frenet_dict).
-# (gate error and the scale anchor are handled separately -- they are locked,
-#  not swept.)
-SWEPT_TERMS = {
-    "closure": closure_loss,                       # 1st-order dephasing
-    "curve_area": losses.curve_zero_area_loss,     # 2nd-order dephasing
-    "energy": pulse_energy_loss,                   # leakage proxy, int Omega^2 dt
+# tantrix area and peak amplitude (T_g * Omega_max) are already scale invariant.
+INV_TERMS = {
+    "closure": closure_term,                       # 1st-order dephasing
+    "curve_area": curve_area_term,                 # 2nd-order dephasing
+    "energy": energy_term,                         # leakage proxy, ~ integral Omega^2
     "tantrix": losses.tantrix_zero_area_loss,      # amplitude / Rabi-error robustness
     "max_amp": losses.max_amp_loss,                # peak drive T_g * Omega_max
 }
 
 
-# --- references ----------------------------------------------------------------
+# --- references + per-curve evaluation -----------------------------------------
 def compute_references(naive_spacecurve, n_frenet=N_FRENET):
-    """Evaluate ``C_i^ref`` (and ``T_g^ref``) on the naive-pulse baseline.
-
-    Parameters
-    ----------
-    naive_spacecurve : qurveros SpaceCurve
-        The naive pulse -- a constant-amplitude arc implementing the target gate
-        (e.g. ``make_circle_arc_spacecurve(theta)``).
-
-    Returns
-    -------
-    dict with keys:
-        ``refs``   : {term_name: C_i^ref} for every swept term (all finite, > 0),
-        ``tg_ref`` : the naive pulse's gate time (arc length),
-        ``eps_ref``: the gate-error reference tolerance.
-    """
+    """Evaluate ``C_i^ref`` on the naive-pulse baseline (all finite, > 0)."""
     naive_spacecurve.evaluate_frenet_dict(n_frenet)
     fd = naive_spacecurve.frenet_dict
-    refs = {name: float(fn(fd)) for name, fn in SWEPT_TERMS.items()}
-    tg_ref = float(frametools.calculate_total_length(fd))
-    return {"refs": refs, "tg_ref": tg_ref, "eps_ref": EPS_REF}
+    refs = {name: float(fn(fd)) for name, fn in INV_TERMS.items()}
+    return {"refs": refs, "tg_ref": float(_length(fd))}
 
 
-# --- single optimization run ---------------------------------------------------
+def evaluate_chat(spacecurve, reference, n_frenet=N_FRENET):
+    """Normalized cost vector ``{term: Chat_i}`` for an arbitrary space curve."""
+    spacecurve.evaluate_frenet_dict(n_frenet)
+    fd = spacecurve.frenet_dict
+    refs = reference["refs"]
+    return {name: float(fn(fd)) / refs[name] for name, fn in INV_TERMS.items()}
+
+
+def total_cost(chat, weights):
+    """``sum_i w_i * Chat_i`` over the swept terms."""
+    return sum(float(weights.get(name, 0.0)) * chat[name] for name in INV_TERMS)
+
+
+# --- the "optimize" arm: BARQ under a normalized weighted objective ------------
 def _normalized(fn, ref):
-    """Wrap a raw loss so it returns the normalized ``C_i / C_i^ref``."""
     return lambda fd: fn(fd) / ref
 
 
-def run_single(W0, weights, reference, target_gate,
-               n_iter=1500, lr=5e-3, checkpoint_every=50, threshold=None):
-    """Optimize one initialization under ``C = sum_i w_i Chat_i`` and log history.
+def optimize_barq(weights, reference, *, max_iter=1200, lr=1e-3,
+                  n_free_points=10, seed=4531469, norm_value=0.25,
+                  checkpoint_every=50, n_frenet=N_FRENET, cost_fn=None):
+    """Run BARQ (PGF, gate exact) minimizing ``sum_i w_i * Chat_i`` and log history.
 
-    Parameters
-    ----------
-    W0 : (deg+1, 3) array
-        Initial Bezier control points (the ansatz, fitted to control points).
-    weights : dict
-        ``{term_name: w_i}`` over ``SWEPT_TERMS``; missing terms default to 0.
-    reference : dict
-        Output of :func:`compute_references` (``refs``/``tg_ref``/``eps_ref``).
-    target_gate : qutip.Qobj
-        Target single-qubit gate for the fidelity (adjoint) term.
-    threshold : float or None
-        If given, also report the first checkpoint step at which the *total*
-        normalized swept cost (sum_i w_i Chat_i, gate/anchor excluded) drops
-        below ``threshold`` -- the early-stop / steps-to-target metric.
+    ``cost_fn(chat, weights)`` (default :func:`total_cost`) computes the total cost
+    recorded in ``cost_history`` -- pass the caller's cost (e.g. one that applies a
+    robustness floor) so the logged trajectory matches the decision metric.
 
     Returns
     -------
-    dict with keys:
-        ``steps``            : checkpoint step indices,
-        ``chat_history``     : {term: [Chat_i at each checkpoint]},
-        ``gate_infidelity``  : [1 - F at each checkpoint],
-        ``tg``               : [T_g at each checkpoint],
-        ``final_chat``       : {term: Chat_i at the last checkpoint},
-        ``steps_to_threshold``: int or None.
+    dict with:
+        ``final_chat``   : {term: Chat_i} at the optimum,
+        ``steps``        : checkpoint step indices,
+        ``cost_history`` : total cost (via ``cost_fn``) at each checkpoint,
+        ``gate_locked``  : True (PGF fixes the gate exactly by construction).
     """
-    refs, tg_ref = reference["refs"], reference["tg_ref"]
-    gate_inf = make_gate_infidelity(target_gate)
-    scale_anchor = make_scale_anchor(tg_ref)
+    if cost_fn is None:
+        cost_fn = total_cost
+    adj_target = quantum_x_adj()
+    barq = BarqCurve(adj_target=adj_target, n_free_points=n_free_points,
+                     pgf_mod=xgate_pgf_mod)
+    init_pgf = barqtools.get_default_pgf_params_dict()
+    init_pgf["norm_value"] = norm_value
+    barq.initialize_parameters(seed=seed, init_pgf_params=init_pgf)
 
-    # Build the objective term list for qurveros: [[fn, weight], ...].
-    # Gate + scale are locked; swept terms enter normalized with their weight.
-    terms = [[gate_inf, W_GATE], [scale_anchor, W_SCALE]]
-    for name, fn in SWEPT_TERMS.items():
-        w = float(weights.get(name, 0.0))
-        if w > 0.0:
-            terms.append([_normalized(fn, refs[name]), w])
+    refs = reference["refs"]
+    terms = [[_normalized(INV_TERMS[name], refs[name]), float(w)]
+             for name, w in weights.items() if float(w) > 0.0]
+    if not terms:  # degenerate all-zero weights: nothing to optimize
+        terms = [[_normalized(INV_TERMS["curve_area"], refs["curve_area"]), 0.0]]
 
-    sc = OptimizableSpaceCurve(curve=bezier_curve_vec, order=0,
-                               interval=[0.0, 1.0], params=jnp.asarray(W0))
-    sc.initialize_parameters(jnp.asarray(W0))
-    sc.prepare_optimization_loss(*terms)
-    sc.optimize(optax.adam(lr), n_iter)
+    # Freeze the scale (norm_value) as in step 3 / barq.py to avoid collapse.
+    labels = jax.tree.map(lambda _: True, barq.params)
+    labels["pgf_params"]["norm_value"] = False
+    optimizer = optax.multi_transform(
+        {True: optax.adam(lr), False: optax.set_to_zero()}, param_labels=labels)
+    barq.prepare_optimization_loss(*terms)
+    barq.optimize(optimizer, max_iter=max_iter)
 
-    hist = sc.get_params_history()
+    hist = barq.get_params_history()
     steps = list(range(0, len(hist), checkpoint_every))
     if steps[-1] != len(hist) - 1:
         steps.append(len(hist) - 1)
-
-    chat_history = {name: [] for name in SWEPT_TERMS}
-    gate_hist, tg_hist, total_swept = [], [], []
+    cost_history = []
     for k in steps:
-        sc.update_params_from_opt_history(k)
-        sc.evaluate_frenet_dict(N_FRENET)
-        fd = sc.frenet_dict
-        tot = 0.0
-        for name, fn in SWEPT_TERMS.items():
-            chat = float(fn(fd)) / refs[name]
-            chat_history[name].append(chat)
-            tot += float(weights.get(name, 0.0)) * chat
-        total_swept.append(tot)
-        gate_hist.append(float(gate_inf(fd)))
-        tg_hist.append(float(frametools.calculate_total_length(fd)))
+        barq.update_params_from_opt_history(k)
+        barq.evaluate_frenet_dict(n_frenet)
+        chat = {name: float(fn(barq.frenet_dict)) / refs[name]
+                for name, fn in INV_TERMS.items()}
+        cost_history.append(cost_fn(chat, weights))
+    final_chat = {name: float(fn(barq.frenet_dict)) / refs[name]
+                  for name, fn in INV_TERMS.items()}
+    return {"final_chat": final_chat, "steps": steps,
+            "cost_history": cost_history, "gate_locked": True}
 
-    steps_to_threshold = None
-    if threshold is not None:
-        for s, tot in zip(steps, total_swept):
-            if tot < threshold:
-                steps_to_threshold = s
-                break
 
-    return {
-        "steps": steps,
-        "chat_history": chat_history,
-        "total_swept": total_swept,
-        "gate_infidelity": gate_hist,
-        "tg": tg_hist,
-        "final_chat": {name: chat_history[name][-1] for name in SWEPT_TERMS},
-        "steps_to_threshold": steps_to_threshold,
-    }
+def quantum_x_adj():
+    """Adjoint (SO(3)) representation of the X gate target (cached-friendly)."""
+    from qurveros.qubit_bench import quantumtools
+    return quantumtools.calculate_adj_rep(qutip.sigmax())
