@@ -50,6 +50,34 @@ Notes
   peak amplitude. The remaining terms (pulse area, gate time, CFI) are recorded
   but not swept in this study.
 
+### What the BARQ optimizer guarantees *by construction* vs what the cost must buy
+
+Not every term above needs to be optimized: BARQ's parameterization already
+satisfies some of them for free. Verified on fresh (un-optimized) random BARQ
+curves (3 seeds):
+
+| property | built in? | evidence (fresh BARQ) |
+|---|---|---|
+| **gate / rotation angle** (`F = 1`) | **YES** — point gate-fixing (PGF) hard-locks it for any parameters | TTC gate fidelity = 1.00000 |
+| **closure = 1st-order dephasing robustness** | **YES** — the curve is forced to start and end at the origin | closure `Ĉ ≡ 0`, endpoints at origin |
+| smooth pulse on/off (zero endpoint curvature) | **YES** — PGF vanishing-envelope condition | — |
+| **curve area = 2nd-order dephasing robustness** | **NO — must be in the cost** | `Ĉ ≈ 5e-3–1e-2` (varies with seed); only → 0 when `curve_zero_area` is weighted |
+| **tantrix area = amplitude / Rabi-drift robustness** | **NO — must be in the cost** | `Ĉ ≈ 2–6` (varies); step 8: 104 → 7.6e-5 only when weighted |
+| pulse energy / peak amplitude / leakage proxy | **NO — must be in the cost** | unconstrained; energy runs to ~2900× if never penalized |
+
+So for BARQ, gate fidelity and 1st-order dephasing are **not tradeoffs** — they
+come for free. Weights only ever need to be spent on **2nd-order dephasing,
+amplitude-error robustness, and the pulse-cost/leakage terms**. (Caveat: PGF
+guarantees the *geometric* gate; the *physical* TTC gate can still degrade for
+extreme optimized curves — always check `barq_gate_fidelity`. See
+`_dev_logs/LESSONS.md` §2.)
+
+> A *good geometric ansatz* (e.g. rcp_lemniscate) satisfies closure AND curve
+> zero-area by construction — i.e. it comes with 2nd-order dephasing robustness
+> too, which BARQ does not. That extra built-in robustness is the ansatz's
+> advantage; but note it is only realized if the ansatz is carried *faithfully*
+> (raw-Bézier), not through BARQ seeding, which mangles it (§5 / LESSONS §3).
+
 ## 3. On scaling / normalization (important)
 
 The raw terms live at very different magnitudes for a typical X(π) curve, e.g.
