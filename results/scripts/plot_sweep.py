@@ -25,8 +25,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 DATA = os.path.join(HERE, "..", "data")
 FIGS = os.path.join(HERE, "..", "figures")
+HISTORY = os.path.join(ROOT, "_dev_logs", "sweep_history")
 
 STRUCT_COLORS = ["#2ca02c", "#ff7f0e", "#9467bd", "#8c564b"]  # rcp, circle, triangle, gaussian
 ENS_COLOR = "#7f7f7f"
@@ -113,7 +115,119 @@ def fig_convergence():
     fig.savefig(out, dpi=140); print("saved", out)
 
 
+def fig_waveform_evolution(iy=1, ix=1):
+    """Control waveform Omega(t), Phi(t) at start / middle / end of optimization,
+    for the four structured warm-starts, rebuilt from the saved free-point history.
+
+    Default cell (iy=1, ix=1) = dephasing wt 1, energy wt 0.01 (gate-clean for all
+    four seeds). Random-default ensemble is intentionally omitted (too arbitrary).
+    """
+    import pulse_shape_novera  # noqa: F401
+    from pulse_shape_novera import sweep
+
+    h = np.load(os.path.join(HISTORY, "initquality_history.npz"))
+    meta = json.load(open(os.path.join(DATA, "sweep_initquality.json")))
+    ph = h["struct_params_hist"]         # [ny,nx,ns,ncheck,nfree,3]
+    steps = h["steps_axis"]
+    names = meta["struct_names"]
+    ns = ph.shape[2]
+    nchk = ph.shape[3]
+    stages = [(0, "start"), (nchk // 2, "middle"), (nchk - 1, "end")]
+    stage_colors = {"start": "#cccccc", "middle": "#ff7f0e", "end": "#1f77b4"}
+
+    def waveform(free):
+        b = sweep.make_seeded_barq(free)
+        b.evaluate_frenet_dict(300)
+        fd = b.frenet_dict
+        x = np.asarray(fd["x_values"])
+        kappa = np.asarray(fd["curvature"])          # Omega (Rabi rate)
+        speed = np.asarray(fd["speed"])
+        tau = np.asarray(fd["torsion"])              # dPhi/dt
+        phi = np.concatenate([[0.0], np.cumsum(0.5 * (tau[1:] * speed[1:] +
+                              tau[:-1] * speed[:-1]) * np.diff(x))])  # cumulative phase
+        return x, kappa, phi
+
+    fig, axes = plt.subplots(2, ns, figsize=(4.2 * ns, 6.4), sharex=True)
+    for k in range(ns):
+        for cidx, label in stages:
+            x, kappa, phi = waveform(ph[iy, ix, k, cidx])
+            axes[0, k].plot(x, kappa, color=stage_colors[label], lw=1.8,
+                            label=f"step {int(steps[cidx])} ({label})")
+            axes[1, k].plot(x, phi, color=stage_colors[label], lw=1.8)
+        axes[0, k].set_title(names[k], fontsize=10)
+        axes[1, k].set_xlabel("normalized time  t / T_gate", fontsize=9)
+        for row in (0, 1):
+            axes[row, k].grid(alpha=0.3)
+    axes[0, 0].set_ylabel("drive amplitude  Ω(t)  [= curvature]", fontsize=9)
+    axes[1, 0].set_ylabel("drive phase  Φ(t)", fontsize=9)
+    axes[0, 0].legend(fontsize=8, loc="best")
+    dvals, evals = meta["deph_vals"], meta["energy_vals"]
+    fig.suptitle("Control-pulse evolution during optimization "
+                 f"(dephasing wt = {dvals[ix]:g}, energy wt = {evals[iy]:g})\n"
+                 "each warm-start: start (gray) → middle (orange) → end (blue)",
+                 fontsize=11)
+    fig.tight_layout()
+    out = os.path.join(FIGS, "fig3_waveform_evolution.png")
+    fig.savefig(out, dpi=140); print("saved", out)
+
+
+def fig_radar():
+    """One radar (spider) chart per weight regime: the final optimized costs of the
+    four structured warm-starts across metrics (all axes 'lower = better',
+    per-axis normalized within the regime; smaller polygon = better)."""
+    d, meta = _load("initquality")
+    dvals, evals = meta["deph_vals"], meta["energy_vals"]
+    names = meta["struct_names"]
+    ny, nx = len(evals), len(dvals)
+    ns = len(names)
+    # metric name -> array [ny,nx,ns], all lower = better
+    metrics = [
+        ("gate\ninfidelity", 1.0 - d["struct_gate"]),
+        ("1st-order\ndephasing", d["struct_chat_closure"]),
+        ("2nd-order\ndephasing", d["struct_chat_curve_area"]),
+        ("amplitude\nerror", d["struct_chat_tantrix"]),
+        ("pulse\nenergy", d["struct_chat_energy"]),
+        ("peak\namplitude", d["struct_chat_max_amp"]),
+    ]
+    labels = [m[0] for m in metrics]
+    nm = len(metrics)
+    angles = np.linspace(0, 2 * np.pi, nm, endpoint=False)
+    angles_closed = np.concatenate([angles, angles[:1]])
+
+    fig, axes = plt.subplots(ny, nx, figsize=(4.2 * nx, 4.2 * ny),
+                             subplot_kw=dict(polar=True))
+    for iy in range(ny):
+        for ix in range(nx):
+            ax = axes[iy, ix]
+            # per-axis min-max normalization across the four seeds
+            for k in range(ns):
+                vals = []
+                for _, arr in metrics:
+                    col = arr[iy, ix]            # length ns
+                    lo, hi = np.nanmin(col), np.nanmax(col)
+                    v = 0.0 if (hi - lo) < 1e-12 else (arr[iy, ix, k] - lo) / (hi - lo)
+                    vals.append(v)
+                vals_closed = np.concatenate([vals, vals[:1]])
+                ax.plot(angles_closed, vals_closed, color=STRUCT_COLORS[k], lw=1.6,
+                        label=names[k] if (iy == 0 and ix == 0) else None)
+                ax.fill(angles_closed, vals_closed, color=STRUCT_COLORS[k], alpha=0.08)
+            ax.set_xticks(angles)
+            ax.set_xticklabels(labels, fontsize=7)
+            ax.set_yticks([])
+            ax.set_title(f"deph={dvals[ix]:g}, energy={evals[iy]:g}", fontsize=9, pad=14)
+    fig.legend(loc="lower center", ncol=4, frameon=False, fontsize=9,
+               bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle("Final optimized cost profile per weight regime "
+                 "(each axis normalized within the regime; smaller polygon = better)",
+                 fontsize=12)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.97])
+    out = os.path.join(FIGS, "fig4_radar_cost_profile.png")
+    fig.savefig(out, dpi=140, bbox_inches="tight"); print("saved", out)
+
+
 if __name__ == "__main__":
     fig_warmstart_vs_random()
     fig_convergence()
+    fig_waveform_evolution()
+    fig_radar()
     print("PLOTS DONE")
