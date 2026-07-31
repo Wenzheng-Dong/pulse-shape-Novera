@@ -1,0 +1,51 @@
+# Single-qubit deterministic benchmarking (1qb-DB)
+
+1qb-DB repeats identical \(X_\pi\)-pulse pairs to amplify coherent pulse error.
+It compares a Gaussian pulse with a robust, strictly resonant composite pulse.
+
+## Protocol
+
+The control is
+
+$$
+H_c(t)=\frac{\Omega_x(t)X+\Omega_y(t)Y}{2},
+\qquad
+(\Omega_x,\Omega_y)\rightarrow(1+\epsilon)(\Omega_x,\Omega_y),
+$$
+
+with \(\Delta(t)=0\). Prepare \(|0\rangle\), apply \(n\) identical \(XX\)
+cycles, and measure
+
+$$
+P_0(n,\epsilon)
+=|\langle0|(X_\epsilon X_\epsilon)^n|0\rangle|^2.
+$$
+
+Use \(\epsilon=\pm3\%\) and \(n=0,\ldots,60\). For an ideal pulse \(P_0=1\).
+For the Gaussian area-error model,
+
+$$
+P_0(n,\epsilon)=\cos^2(n\pi\epsilon),
+$$
+
+so coherent error appears as an oscillation. A robust pulse should suppress
+this variation.
+
+## Files
+
+- [`1qb-DB-test.nb`](1qb-DB-test.nb): analytic Mathematica model.
+- [`X_gate_pulse_generation/`](X_gate_pulse_generation/): saved Gaussian and
+  resonant robust waveforms.
+- [`1qb-DB-demo/`](1qb-DB-demo/): completed waveform-level DB simulation.
+
+## Status and next steps
+
+1. **Waveforms — complete.** Gaussian and reoptimized resonant composite
+   candidates are saved and reproducible.
+2. **Simulation — complete.** The notebook injects error into the sampled
+   Hamiltonian, calculates the noisy gate, and plots \(P_0(n)\) through
+   60 cycles.
+3. **Hardware conversion — next.** Choose \(T_g\), sample rate, and amplitude limit;
+   then convert normalized controls to device units.
+4. **Experiment.** Run both pulses with the same calibration and fit the
+   residual coherent error and \(\Delta P_0\).

@@ -1,0 +1,51 @@
+{
+  "format_version": 1,
+  "candidate": "finite-error optimized resonant composite X(pi)",
+  "ansatz": {
+    "rotation_angles_rad": [
+      3.141592653589793,
+      3.141592653589793,
+      6.283185307179586,
+      3.141592653589793
+    ],
+    "phases_rad": [
+      0.0,
+      1.8226729618831436,
+      5.4701641259664164,
+      1.8226729618831436
+    ],
+    "segment_envelope": "sin^2",
+    "segment_durations": "proportional to rotation angle",
+    "detuning": 0.0
+  },
+  "optimization": {
+    "warm_start_family": "BB1-like four-segment composite pulse",
+    "optimized_variables": [
+      "phase_1_equals_phase_3",
+      "phase_2"
+    ],
+    "epsilon_grid": [
+      -0.03,
+      -0.025,
+      -0.02,
+      -0.015,
+      -0.01,
+      -0.005,
+      0.0,
+      0.005,
+      0.01,
+      0.015,
+      0.02,
+      0.025,
+      0.03
+    ],
+    "db_cycles": 60,
+    "objective": "max_db_population_loss + 10*max_single_gate_infidelity",
+    "global_optimizer": "scipy.optimize.differential_evolution",
+    "global_seed": 20260730,
+    "global_popsize": 20,
+    "global_maxiter": 300,
+    "global_tol": 1e-10,
+    "polish": "Nelder-Mead"
+  }
+}

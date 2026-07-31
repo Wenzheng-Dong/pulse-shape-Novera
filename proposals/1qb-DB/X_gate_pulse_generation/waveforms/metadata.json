@@ -1,0 +1,251 @@
+{
+  "format_version": 1,
+  "generator": {
+    "path": "proposals/1qb-DB/X_gate_pulse_generation/generate_waveforms.py",
+    "sha256": "2e9e1b0adff01eeb7aec37267a7509fa41d2bea6e429c7416aec9c9f73fdb5ae",
+    "package_versions": {
+      "pulse-shape-novera": "0.0.1",
+      "qurveros": "1.0.0",
+      "jax": "0.4.38",
+      "jaxlib": "0.4.38",
+      "optax": "0.2.5",
+      "numpy": "2.4.6",
+      "scipy": "1.17.1",
+      "qutip": "5.3.0"
+    },
+    "source_sha256": {
+      "environment.yml": "316a2280592bdbfc918d7b2aec36e4576f91905b984531e12d94ffb38fb64887",
+      "src/pulse_shape_novera/_patches.py": "c9a58862aff646987f6d61a27dcaa2a15d040a1cbc21a4af511f5c3b3b4ed3a0",
+      "src/pulse_shape_novera/ansatz.py": "a9f316a4b53b1c198689a4f52353dd064a0c2f2a39faee85556cfa3adfdef6c8",
+      "src/pulse_shape_novera/barq.py": "12b07de40bcf2f23abb4788f0003c995ef77cb685956fef58b5b535ff9e7f8a5",
+      "src/pulse_shape_novera/proxies.py": "0c28ad64bb2fb214ed8b1fff15e4f70ce35ef9f2c150cf4e3be12a5646faf21a",
+      "src/pulse_shape_novera/sweep.py": "06067a664f582b09de6564cc3615a2320b7130ce241b2d1e54cebb9f57ccbe5e"
+    }
+  },
+  "normalization": {
+    "time": "s=t/Tg",
+    "fields": "Tg*Omega and Tg*Delta",
+    "hamiltonian": "Tg H(s) = 0.5 * [Tg*omega_x(s)*X + Tg*omega_y(s)*Y + Tg*delta(s)*Z]"
+  },
+  "samples": 2501,
+  "gaussian_baseline": {
+    "target_angle_rad": 3.141592653589793,
+    "duration": 1.0,
+    "sigma_fraction": 0.18,
+    "control_mode": "XY"
+  },
+  "robust_candidate": {
+    "status": "selected for the resonant +/-3%, 60-cycle experiment",
+    "method": "finite-error optimized four-segment composite X(pi)",
+    "control_mode": "resonant XY",
+    "detuning": 0.0,
+    "reused_saved_parameters": true,
+    "parameter_file": "resonant_composite_robust_params.json",
+    "parameters": {
+      "format_version": 1,
+      "candidate": "finite-error optimized resonant composite X(pi)",
+      "ansatz": {
+        "rotation_angles_rad": [
+          3.141592653589793,
+          3.141592653589793,
+          6.283185307179586,
+          3.141592653589793
+        ],
+        "phases_rad": [
+          0.0,
+          1.8226729618831436,
+          5.470164125966416,
+          1.8226729618831436
+        ],
+        "segment_envelope": "sin^2",
+        "segment_durations": "proportional to rotation angle",
+        "detuning": 0.0
+      },
+      "optimization": {
+        "warm_start_family": "BB1-like four-segment composite pulse",
+        "optimized_variables": [
+          "phase_1_equals_phase_3",
+          "phase_2"
+        ],
+        "epsilon_grid": [
+          -0.03,
+          -0.025,
+          -0.02,
+          -0.015,
+          -0.01,
+          -0.005,
+          0.0,
+          0.005,
+          0.01,
+          0.015,
+          0.02,
+          0.025,
+          0.03
+        ],
+        "db_cycles": 60,
+        "objective": "max_db_population_loss + 10*max_single_gate_infidelity",
+        "global_optimizer": "scipy.optimize.differential_evolution",
+        "global_seed": 20260730,
+        "global_popsize": 20,
+        "global_maxiter": 300,
+        "global_tol": 1e-10,
+        "polish": "Nelder-Mead"
+      }
+    }
+  },
+  "legacy_ttc_candidate": {
+    "status": "unsupported by the resonant-only experiment; retained for comparison",
+    "method": "BARQ with total-torsion compensation (TTC)",
+    "control_mode": "TTC",
+    "reused_saved_parameters": true,
+    "constant_Tg_delta_squared": 9.693558925429373
+  },
+  "resonant_screening_candidate": {
+    "status": "rejected for the 60-cycle DB target; retained for comparison",
+    "method": "BARQ with resonant total-torsion compensation",
+    "control_mode": "resTTC",
+    "reused_saved_parameters": true,
+    "initialization": {
+      "n_free_points": 10,
+      "seed": 4531469,
+      "norm_value": 0.25
+    },
+    "optimizer": {
+      "algorithm": "Adam",
+      "learning_rate": 0.001
+    },
+    "optimization": [
+      {
+        "steps": 1200,
+        "cost": "1.0*C_tantrix_hat + 0.01*C_energy_hat + 0.01*C_max_amp_hat"
+      },
+      {
+        "steps": 400,
+        "cost": "previous cost + 0.01*(Tg*Delta_TTC)^2"
+      }
+    ],
+    "normalized_geometry_costs": {
+      "closure": 0.0,
+      "curve_area": 0.0005102858627218666,
+      "energy": 18.08410524770009,
+      "tantrix": 0.004162531707084453,
+      "max_amp": 7.004078737822011
+    },
+    "TTC_detuning_squared": 0.008415172000649448
+  },
+  "pulses": {
+    "gaussian_x_pi": {
+      "zero_error_fidelity": 0.9999999999999978,
+      "peak_Tg_omega": 7.001175175375855,
+      "dimensionless_energy": 15.636954970041968,
+      "fidelity_by_epsilon": {
+        "-0.03": 0.9985206548677114,
+        "+0.00": 0.9999999999999978,
+        "+0.03": 0.9985206548676828
+      },
+      "DB_trace_over_cycles_0_to_60": {
+        "-0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.6545084971295346,
+          "P0_min": 2.485890015704198e-21,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 1.0
+        },
+        "+0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.6545084972169886,
+          "P0_min": 6.49585118057513e-22,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 1.0
+        }
+      }
+    },
+    "resonant_composite_robust_x_pi": {
+      "zero_error_fidelity": 0.999999999999468,
+      "peak_Tg_omega": 31.41592653589793,
+      "dimensionless_energy": 370.1101650408509,
+      "fidelity_by_epsilon": {
+        "-0.03": 0.9999999998214023,
+        "+0.00": 0.999999999999468,
+        "+0.03": 0.9999999998216387
+      },
+      "DB_trace_over_cycles_0_to_60": {
+        "-0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.9999961473876388,
+          "P0_min": 0.9999961473876388,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 3.852612361243679e-06
+        },
+        "+0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.99999614741673,
+          "P0_min": 0.99999614741673,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 3.8525832699587426e-06
+        }
+      }
+    },
+    "barq_amplitude_robust_x_pi": {
+      "zero_error_fidelity": 0.9999999999711061,
+      "peak_Tg_omega": 41.095773366474,
+      "dimensionless_energy": 305.01643454110496,
+      "fidelity_by_epsilon": {
+        "-0.03": 0.999997594155409,
+        "+0.00": 0.9999999999711061,
+        "+0.03": 0.9999981311823709
+      },
+      "DB_trace_over_cycles_0_to_60": {
+        "-0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.9854780889497086,
+          "P0_min": 0.9854780889497086,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 0.014521911050291436
+        },
+        "+0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.9876395804045928,
+          "P0_min": 0.9876395804045928,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 0.012360419595407235
+        }
+      }
+    },
+    "barq_resonant_screening_x_pi": {
+      "zero_error_fidelity": 0.9999999995969532,
+      "peak_Tg_omega": 22.003961806027025,
+      "dimensionless_energy": 178.48213047775127,
+      "fidelity_by_epsilon": {
+        "-0.03": 0.9999893554103965,
+        "+0.00": 0.9999999995969532,
+        "+0.03": 0.9999930404529144
+      },
+      "DB_trace_over_cycles_0_to_60": {
+        "-0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.9782399433801718,
+          "P0_min": 0.9782399433801718,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 0.02176005661982816
+        },
+        "+0.03": {
+          "cycles": 60,
+          "P0_at_final_cycle": 0.8835475380887572,
+          "P0_min": 0.8835475380887572,
+          "P0_max": 1.0,
+          "delta_P0_max_minus_min": 0.11645246191124281
+        }
+      }
+    }
+  },
+  "artifact_sha256": {
+    "barq_amplitude_robust_params.npz": "97053b984cf3665db62bd3a3fc489be5f39cd0d8f1aaf91663b4cb38f44773fb",
+    "barq_resonant_screening_params.npz": "68f75b2c9e21c55234acaa4262d7a4bdb5e037202d7eacdb7613c78f70525186",
+    "resonant_composite_robust_params.json": "1d2feb1a35f888fa52e9df954231b1eaef5b4142c7179607e94e3e41a923eef3",
+    "gaussian_x_pi.csv": "072a4b27eeba02a595e3873528531c3469abda28002763eb30b8db641a2ba8ff",
+    "resonant_composite_robust_x_pi.csv": "116803ad9bc947cb9fef303efaa0f87a0217568a7748ea1d0cd566d7e4126cb7",
+    "barq_amplitude_robust_x_pi.csv": "97491a5c21f971e569d28b5377d67f3ab3ed910ef900d46d3f079ddbc328347b",
+    "barq_resonant_screening_x_pi.csv": "583052fc3ccddf24740afedd76384b23a425ebb448bc253382cf4fd3ce53a577"
+  }
+}

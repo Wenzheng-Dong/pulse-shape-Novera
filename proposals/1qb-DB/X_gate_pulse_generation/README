@@ -1,0 +1,75 @@
+# \(X_\pi\)-pulse generation
+
+This directory contains the two pulses used by 1qb-DB:
+
+- Gaussian \(X_\pi\): baseline;
+- resonant composite \(X_\pi\): robust candidate.
+
+The experiment supports resonant control only, so the selected pulse has
+\(\Delta(t)=0\). A common amplitude error is applied to both quadratures:
+
+$$
+H_c(t)=\frac{\Omega_x(t)X+\Omega_y(t)Y}{2},\qquad
+(\Omega_x,\Omega_y)\rightarrow(1+\epsilon)(\Omega_x,\Omega_y).
+$$
+
+## Robust candidate
+
+The earlier resonant BARQ result is not sufficiently flat over 60 cycles, and
+the stronger TTC result requires unsupported detuning. Therefore, the current
+candidate was reoptimized directly for the experimental target:
+
+- error grid: \(-3\%\) to \(+3\%\);
+- DB range: \(0\) to \(60\) cycles;
+- four resonant segments with rotation angles
+  \((\pi,\pi,2\pi,\pi)\);
+- optimized phases
+  \((0,1.822673,5.470164,1.822673)\).
+
+The cost is
+
+$$
+\max_\epsilon[1-\min_{0\le n\le60}P_0(n,\epsilon)]
++10\max_\epsilon[1-F_{\rm gate}(\epsilon)].
+$$
+
+The first term directly suppresses the DB oscillation. The fidelity term
+prevents selecting a pulse that looks flat but no longer implements \(X_\pi\).
+
+## Validation
+
+| pulse | detuning | peak \(T_g\Omega\) | \(P_0(60)\), \(-3\%/+3\%\) | \(\Delta P_0\), \(-3\%/+3\%\) |
+|---|---:|---:|---:|---:|
+| Gaussian | \(0\) | \(7.00\) | \(0.6545/0.6545\) | \(1.000/1.000\) |
+| resonant composite | \(0\) | \(31.42\) | \(0.999996/0.999996\) | \(3.85\times10^{-6}/3.85\times10^{-6}\) |
+| earlier resonant BARQ | \(0\) | \(22.00\) | \(0.9782/0.8835\) | \(0.0218/0.1165\) |
+
+Here \(\Delta P_0=\max P_0-\min P_0\) over cycles \(0\ldots60\). The composite
+pulse uses total rotation area \(5\pi\), so it needs a longer gate or a higher
+peak drive than the Gaussian.
+
+## Reuse
+
+Directly usable files are in [`waveforms/`](waveforms/):
+
+- `gaussian_x_pi.csv`;
+- `resonant_composite_robust_x_pi.csv`;
+- `resonant_composite_robust_params.json`;
+- `metadata.json`, including settings, validation, versions, and checksums.
+
+The CSV columns are:
+
+```text
+time_over_Tg,Tg_omega_x,Tg_omega_y,Tg_omega_envelope,phase_rad,Tg_delta
+```
+
+Regenerate the files from the saved parameters:
+
+```bash
+conda run -n curve python \
+  proposals/1qb-DB/X_gate_pulse_generation/generate_waveforms.py
+```
+
+Add `--reoptimize` only when intentionally searching for new composite phases.
+The older BARQ/TTC files remain for comparison and are not selected for this
+experiment.

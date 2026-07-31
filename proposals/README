@@ -1,0 +1,26 @@
+# Experiment proposals
+
+This directory turns the geometric-control methods in this repository into
+testable experiments.
+
+## Current proposal
+
+### [Single-qubit deterministic benchmarking (1qb-DB)](1qb-DB/)
+
+The 1qb-DB experiment repeats \(X_\pi\)-pulse pairs to amplify coherent
+pulse-area error. It compares a standard Gaussian pulse with a geometric pulse
+designed to suppress multiplicative amplitude error.
+
+An imperfect pulse produces an oscillation in the measured \(|0\rangle\)
+survival probability. A successful robust pulse should strongly suppress that
+oscillation over the tested range.
+
+Current status:
+
+- analytic Mathematica model: available;
+- Gaussian and strictly resonant robust waveforms: validated for
+  \(\pm3\%\) error through 60 cycles;
+- waveform-level DB simulation: complete;
+- hardware-unit conversion and experiment: planned.
+
+See the [1qb-DB README](1qb-DB/) for the protocol and implementation plan.

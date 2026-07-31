@@ -1,0 +1,33 @@
+# 1qb-DB waveform demo
+
+This directory connects the analytic Mathematica model to the sampled
+waveforms. [`1qb-DB-demo.ipynb`](1qb-DB-demo.ipynb) is complete and has been
+validated from a clean Python namespace.
+
+The numerical propagation, plotting, reporting, and validation functions live
+in [`db_helpers.py`](db_helpers.py), keeping the notebook cells short.
+
+## Inputs
+
+Import from
+[`../X_gate_pulse_generation/waveforms/`](../X_gate_pulse_generation/waveforms/):
+
+- `gaussian_x_pi.csv`;
+- `resonant_composite_robust_x_pi.csv`;
+- `metadata.json`.
+
+Both controls use the same normalized convention and have zero detuning.
+
+## Notebook contents
+
+1. Plot \(\Omega_x(t)\) and \(\Omega_y(t)\).
+2. Verify that both pulses implement \(X_\pi\) at zero error.
+3. Inject \(\epsilon\) into the sampled Hamiltonian and numerically calculate
+   the time-ordered noisy gate \(U_\epsilon(T_g)\).
+4. Use the calculated gate to simulate \(n=0,\ldots,60\) and
+   \(\epsilon=\pm3\%\).
+5. Compare gate fidelity and \(\Delta P_0\).
+
+The DB curves are calculated from the waveform Hamiltonians rather than an
+analytic pulse-area formula. The results reproduce the validation values
+recorded in `metadata.json`. Run all cells using the `curve` environment.
