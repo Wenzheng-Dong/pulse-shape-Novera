@@ -14,20 +14,64 @@ Import from
 
 - `gaussian_x_pi.csv`;
 - `resonant_composite_robust_x_pi.csv`;
-- `metadata.json`.
+- `metadata.json`;
+- `barq_resonant_screening_x_pi.csv`, used only in the error-curve comparison
+  of section 1 as a smooth reference, never in the DB sections.
 
-Both controls use the same normalized convention and have zero detuning.
+All of these use the same normalized convention and have zero detuning.
 
 ## Notebook contents
 
 1. Plot \(\Omega_x(t)\) and \(\Omega_y(t)\).
-2. Verify that both pulses implement \(X_\pi\) at zero error.
-3. Inject \(\epsilon\) into the sampled Hamiltonian and numerically calculate
+2. Plot the amplitude-error curve \(R(t)\) of both controls, plus one smooth
+   resonant reference waveform, in 3D and in the three plane projections, and
+   report the closure distance \(|R(T_g)-R(0)|\) with the signed projected
+   areas.
+3. Verify that both pulses implement \(X_\pi\) at zero error.
+4. Inject \(\epsilon\) into the sampled Hamiltonian and numerically calculate
    the time-ordered noisy gate \(U_\epsilon(T_g)\).
-4. Use the calculated gate to simulate \(n=0,\ldots,60\) and
+5. Use the calculated gate to simulate \(n=0,\ldots,60\) and
    \(\epsilon=\pm3\%\).
-5. Compare gate fidelity and \(\Delta P_0\).
+6. Compare gate fidelity and \(\Delta P_0\).
 
 The DB curves are calculated from the waveform Hamiltonians rather than an
 analytic pulse-area formula. The results reproduce the validation values
 recorded in `metadata.json`. Run all cells using the `curve` environment.
+
+## Error-curve geometry
+
+The injected error is multiplicative, so the relevant curve integrates the
+toggling-frame drive, \(R(t)=\int_0^t g\,ds\) with
+\(U_0^\dagger H_cU_0=\tfrac12g\cdot\vec\sigma\). Its closure distance is the
+error rotation angle per unit \(\epsilon\), and its signed area vector
+\(\tfrac12\oint R\times dR\) carries the leading second-order term.
+`error_curve(pulse, noise="dephasing")` returns the standard unit-speed SCQC
+curve instead, for reference.
+
+| curve | length | \(|R(T_g)-R(0)|\) | \(|\vec A|\) | \(\Delta P_0\) at \(\pm3\%\) |
+|---|---:|---:|---:|---:|
+| Gaussian | \(\pi\) | \(\pi\) | \(0\) | \(1.00\) |
+| resonant composite | \(5\pi\) | \(4.70\times10^{-3}\) | \(5.30\times10^{-3}\) | \(3.85\times10^{-6}\) |
+| BARQ resonant (smooth, reference) | \(3.43\pi\) | \(2.17\times10^{-1}\) | \(3.73\) | \(2.1\times10^{-2}/1.2\times10^{-1}\) |
+
+The first two curves lie in the \(R_z=0\) plane because \(\Delta\equiv0\) and their
+drive axis is piecewise constant; the smooth reference waveform turns its phase
+continuously and its curve is genuinely three-dimensional.
+
+The closure ordering matches the DB ordering, which is the point of the panel:
+geometry alone ranks the three waveforms before any DB trace is simulated. Note
+that the smooth candidate is the *worst* of the three at closing its amplitude
+error curve, even though its dephasing curve nearly closes
+(\(1.1\times10^{-3}\)) — it is robust against a noise channel this experiment
+does not inject. Smoothness of the envelope is not robustness.
+
+The Gaussian curve is a straight line, so its error accumulates at first
+order: its angle error is exactly \(\epsilon\pi\) at any \(\epsilon\). The
+composite curve almost closes, which is the mechanism behind its flat DB
+trace. Its closure reproduces the numerically propagated single-gate angle
+error in the \(\epsilon\to0\) limit; at \(\epsilon=\pm3\%\) the propagated
+angle is \(3.27\times10^{-5}\), i.e. smaller than the first-order estimate
+\(\epsilon|R(T_g)-R(0)|=1.41\times10^{-4}\), because the composite phases were
+optimized on the \(\pm3\%\) window rather than for exact closure. Propagating
+that single-gate angle through 60 cycles as \(\cos^2(n\theta)\) reproduces the
+tabulated \(\Delta P_0=3.85\times10^{-6}\).

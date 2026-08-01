@@ -17,7 +17,14 @@ I2 = np.eye(2, dtype=complex)
 X = np.array([[0, 1], [1, 0]], dtype=complex)
 Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
 Z = np.array([[1, 0], [0, -1]], dtype=complex)
+PAULIS = np.stack([X, Y, Z])
 U_TARGET = -1j * X
+
+PULSE_COLORS = {
+    "Gaussian": "tab:blue",
+    "Resonant composite": "tab:orange",
+    "BARQ resonant (smooth)": "tab:green",
+}
 
 WAVEFORM_DIR = (
     Path(__file__).resolve().parents[1]
@@ -26,21 +33,23 @@ WAVEFORM_DIR = (
 )
 
 
+def load_waveform(filename):
+    """Load one waveform CSV from the saved waveform directory."""
+    return np.genfromtxt(
+        WAVEFORM_DIR / filename,
+        delimiter=",",
+        names=True,
+    )
+
+
 def load_experiment_inputs():
-    """Load the selected waveform CSVs and their saved metadata."""
+    """Load the two selected waveform CSVs and their saved metadata."""
     with (WAVEFORM_DIR / "metadata.json").open(encoding="utf-8") as handle:
         metadata = json.load(handle)
 
-    def load_csv(filename):
-        return np.genfromtxt(
-            WAVEFORM_DIR / filename,
-            delimiter=",",
-            names=True,
-        )
-
     pulses = {
-        "Gaussian": load_csv("gaussian_x_pi.csv"),
-        "Resonant composite": load_csv(
+        "Gaussian": load_waveform("gaussian_x_pi.csv"),
+        "Resonant composite": load_waveform(
             "resonant_composite_robust_x_pi.csv"
         ),
     }
@@ -87,6 +96,247 @@ def injected_midpoint_hamiltonians(pulse, epsilon):
         + midpoint_delta[:, None, None] * Z
     )
     return np.diff(time), hamiltonians
+
+
+def ideal_propagators(pulse):
+    """Calculate the error-free propagator U_0 at every sampled time."""
+    time_steps, hamiltonians = injected_midpoint_hamiltonians(pulse, 0.0)
+    propagators = np.empty((len(time_steps) + 1, 2, 2), dtype=complex)
+    propagators[0] = I2
+    for index, (dt, hamiltonian) in enumerate(
+        zip(time_steps, hamiltonians)
+    ):
+        propagators[index + 1] = (
+            expm(-1j * hamiltonian * dt) @ propagators[index]
+        )
+    return propagators
+
+
+def error_curve(pulse, noise="amplitude"):
+    """Calculate the first-order error curve R(t) of one waveform.
+
+    An error Hamiltonian H_err(t)=epsilon*G(t) enters the first Magnus
+    term as -i*epsilon*int_0^Tg U_0^dag(t) G(t) U_0(t) dt.  Writing the
+    toggling-frame operator as U_0^dag G U_0 = g(t).sigma/2 defines the
+    error curve
+
+        R(t) = int_0^t g(s) ds,
+
+    whose geometry carries the robustness of the pulse:
+
+    - ``closure`` = |R(Tg)-R(0)| is the first-order error rotation angle
+      per unit epsilon, so it vanishes exactly for a first-order robust
+      pulse (a closed curve);
+    - ``area`` = (1/2) int R x dR is the signed area vector, whose three
+      components are the areas of the projections onto the yz, zx and xy
+      planes.  It controls the leading second-order term.  The open path
+      is closed by a straight chord back to the origin, which adds no
+      area because R is parallel to dR along it.
+
+    Parameters
+    ----------
+    pulse : numpy structured array
+        One imported waveform, in the normalized CSV convention.
+    noise : {"amplitude", "dephasing"}
+        Which error the curve describes.  ``"amplitude"`` uses G=H_c,
+        the multiplicative drive error that this demo injects; the curve
+        then has speed Tg*Omega(t) and total length equal to the total
+        rotation angle in radians.  ``"dephasing"`` uses G=Z/2, the
+        standard SCQC error curve, which is unit speed with length Tg.
+
+    Returns
+    -------
+    dict
+        ``time``, ``curve`` (N, 3), ``closure``, ``area`` (3,) and
+        ``length``.  All lengths and areas are in radians (radians^2),
+        because the waveforms are normalized to Tg=1.
+    """
+    time = pulse["time_over_Tg"]
+    if noise == "amplitude":
+        generator = np.stack(
+            [
+                pulse["Tg_omega_x"],
+                pulse["Tg_omega_y"],
+                np.zeros_like(time),
+            ],
+            axis=1,
+        )
+    elif noise == "dephasing":
+        generator = np.zeros((len(time), 3))
+        generator[:, 2] = 1.0
+    else:
+        raise ValueError(f"unknown noise channel: {noise!r}")
+
+    propagators = ideal_propagators(pulse)
+    generator_operator = np.einsum("na,aij->nij", generator, PAULIS)
+    toggled = np.einsum(
+        "nji,njk,nkl->nil",
+        propagators.conj(),
+        generator_operator,
+        propagators,
+    )
+    # g_b = (1/2) Tr[sigma_b U_0^dag (c.sigma) U_0], real by hermiticity.
+    tangent = 0.5 * np.einsum("aij,nji->na", PAULIS, toggled).real
+
+    increments = 0.5 * (tangent[:-1] + tangent[1:]) * np.diff(time)[:, None]
+    curve = np.vstack([np.zeros(3), np.cumsum(increments, axis=0)])
+    midpoints = 0.5 * (curve[:-1] + curve[1:])
+    area = 0.5 * np.sum(np.cross(midpoints, np.diff(curve, axis=0)), axis=0)
+    return {
+        "time": time,
+        "curve": curve,
+        "closure": float(np.linalg.norm(curve[-1] - curve[0])),
+        "area": area,
+        "length": float(np.sum(np.linalg.norm(increments, axis=1))),
+    }
+
+
+def calculate_error_curves(pulses, noise="amplitude"):
+    """Calculate the error curve of every imported waveform."""
+    return {
+        name: error_curve(pulse, noise)
+        for name, pulse in pulses.items()
+    }
+
+
+def plot_error_curves(curves):
+    """Show the error curves in 3D together with their plane projections.
+
+    The wide translucent line, the thin line and the dashed line let the
+    curves stay visible where they overlap, as in the DB comparison plot.
+    All panels use one common isotropic scale, so a curve that stays in a
+    plane also looks flat instead of having its numerical noise magnified.
+
+    Dots mark equally spaced times, so their spacing shows |dR/dt|=Omega(t):
+    a smooth envelope shows up as a smooth density along the path, whereas
+    the *shape* only bends where the drive phase turns.  A composite pulse
+    with piecewise-constant phase therefore gives a polygon whose corners
+    are traversed at Omega=0, however smooth its envelope is.
+    """
+    import matplotlib.pyplot as plt
+
+    # (horizontal axis, vertical axis, area component carried by the plane)
+    projections = ((0, 1, "xy"), (1, 2, "yz"), (2, 0, "zx"))
+    labels = ("x", "y", "z")
+    styles = (
+        {"linewidth": 3.5, "alpha": 0.55, "zorder": 2},
+        {"linewidth": 1.6, "zorder": 3},
+        {"linewidth": 1.4, "linestyle": (0, (5, 2)), "zorder": 4},
+    )
+
+    time_dots = 80  # equally spaced samples in time, not in arc length
+    points = np.vstack([result["curve"] for result in curves.values()])
+    center = 0.5 * (points.max(axis=0) + points.min(axis=0))
+    half_span = 0.55 * np.ptp(points, axis=0).max()
+    limits = np.stack([center - half_span, center + half_span], axis=1)
+
+    figure = plt.figure(figsize=(11, 8))
+    space_axis = figure.add_subplot(2, 2, 1, projection="3d")
+    for index, (name, result) in enumerate(curves.items()):
+        curve = result["curve"]
+        color = PULSE_COLORS[name]
+        style = styles[index % len(styles)]
+        label = f"{name}, $|R(T)-R(0)|$={result['closure']:.1e}"
+        space_axis.plot(*curve.T, color=color, label=label, **style)
+        space_axis.scatter(
+            *curve[0], color=color, marker="o", s=45, depthshade=False
+        )
+        space_axis.scatter(
+            *curve[-1],
+            color=color,
+            marker="s",
+            s=45,
+            facecolor="white",
+            depthshade=False,
+        )
+    space_axis.set(
+        title="error curves (circle: start, square: end)",
+        xlabel="$R_x$",
+        ylabel="$R_y$",
+        zlabel="$R_z$",
+        xlim=limits[0],
+        ylim=limits[1],
+        zlim=limits[2],
+    )
+    space_axis.set_box_aspect((1, 1, 1))
+    space_axis.legend(loc="upper left", fontsize=8)
+
+    for index, (i, j, plane) in enumerate(projections):
+        axis = figure.add_subplot(2, 2, index + 2)
+        for order, (name, result) in enumerate(curves.items()):
+            curve = result["curve"]
+            color = PULSE_COLORS[name]
+            style = styles[order % len(styles)]
+            axis.plot(
+                curve[:, i], curve[:, j], color=color, label=name, **style
+            )
+            stride = max(1, len(curve) // time_dots)
+            axis.plot(
+                curve[::stride, i],
+                curve[::stride, j],
+                color=color,
+                linestyle="none",
+                marker=".",
+                markersize=3,
+                zorder=4,
+            )
+            axis.plot(*curve[0, [i, j]], color=color, marker="o")
+            axis.plot(
+                *curve[-1, [i, j]],
+                color=color,
+                marker="s",
+                markerfacecolor="white",
+            )
+        # Annotate the area this plane carries, in the colour of its curve.
+        for row, (name, result) in enumerate(curves.items()):
+            axis.text(
+                0.02,
+                0.96 - 0.07 * row,
+                f"$A_{{{plane}}}$={result['area'][(i + 2) % 3]:+.2e}",
+                transform=axis.transAxes,
+                color=PULSE_COLORS[name],
+                fontsize=8,
+                verticalalignment="top",
+            )
+        axis.set(
+            title=f"{plane} projection (signed area $A_{{{plane}}}$)",
+            xlabel=f"$R_{labels[i]}$",
+            ylabel=f"$R_{labels[j]}$",
+            xlim=limits[i],
+            ylim=limits[j],
+        )
+        axis.set_aspect("equal")
+        axis.grid(alpha=0.25)
+    figure.tight_layout()
+    return figure
+
+
+def print_error_curve_report(curves, errors=None):
+    """Print the closure distance and projected areas of each error curve."""
+    print(
+        f"{'pulse':24s} {'length/pi':>10s} {'|R(T)-R(0)|':>13s} "
+        f"{'A_yz':>12s} {'A_zx':>12s} {'A_xy':>12s} {'|A|':>12s}"
+    )
+    print("-" * 100)
+    for name, result in curves.items():
+        area = result["area"]
+        print(
+            f"{name:24s} {result['length'] / np.pi:10.6f} "
+            f"{result['closure']:13.6e} "
+            f"{area[0]:12.4e} {area[1]:12.4e} {area[2]:12.4e} "
+            f"{np.linalg.norm(area):12.4e}"
+        )
+    if errors is None:
+        return
+    # |R(Tg)-R(0)| is the error rotation angle per unit epsilon, so this is
+    # the first-order prediction for the angle error of a single gate.
+    print("\nfirst-order error angle per gate, epsilon*|R(T)-R(0)|:")
+    for name, result in curves.items():
+        angles = "  ".join(
+            f"epsilon={epsilon:+.0%}: {abs(epsilon) * result['closure']:.3e} rad"
+            for epsilon in errors
+        )
+        print(f"{name:24s} {angles}")
 
 
 def time_ordered_gate(pulse, epsilon=0.0):
@@ -155,10 +405,6 @@ def plot_db_comparison(traces, cycles):
     """Overlay both pulses; use connected markers when error signs overlap."""
     import matplotlib.pyplot as plt
 
-    colors = {
-        "Gaussian": "tab:blue",
-        "Resonant composite": "tab:orange",
-    }
     styles = {
         -0.03: {
             "linestyle": "-",
@@ -185,7 +431,7 @@ def plot_db_comparison(traces, cycles):
             axis.plot(
                 cycle_numbers,
                 values,
-                color=colors[name],
+                color=PULSE_COLORS[name],
                 label=f"{name}, epsilon={epsilon:+.0%}",
                 **styles[epsilon],
             )
