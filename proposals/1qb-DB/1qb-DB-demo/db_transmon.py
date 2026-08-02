@@ -1279,6 +1279,446 @@ def verify_noise_model(pulses, device=DEVICE, strides=(1, 2, 4),
         print(f"{name:26s}{eigenvalues.min():15.2e}{trace_error:17.1e}")
 
 
+# --- DB sequence --------------------------------------------------------------
+
+#: Cycles of the DB sequence.  One cycle is the gate *pair* ``XX``, so an ideal
+#: sequence returns to ``|0>`` after every cycle and the readout is the return
+#: probability ``P_0(n)``.  Kept at the two-level demo's value so the traces can
+#: be compared against it directly.
+N_CYCLES = 60
+
+#: Sequence configurations.  ``coherent`` isolates the control-error
+#: oscillation: the dissipator and the static detuning are off, so the only
+#: thing left that moves ``P_0`` is ``epsilon`` (leakage cannot be switched off
+#: -- the device has three levels in every configuration).  ``full, eps=0`` is
+#: the decay envelope the same sequence has *without* any control error, and the
+#: gap between the two ``full, eps=+-3%`` traces and that envelope is what a DB
+#: experiment actually reads out.
+DB_CONFIGS = (
+    ("coherent, eps=0", dict(epsilon=0.0, dissipation=False, static=False)),
+    ("coherent, eps=+3%", dict(epsilon=+0.03, dissipation=False, static=False)),
+    ("coherent, eps=-3%", dict(epsilon=-0.03, dissipation=False, static=False)),
+    ("full, eps=0", dict(epsilon=0.0, dissipation=True, static=True)),
+    ("full, eps=+3%", dict(epsilon=+0.03, dissipation=True, static=True)),
+    ("full, eps=-3%", dict(epsilon=-0.03, dissipation=True, static=True)),
+)
+
+#: Labels :func:`print_db_table` and :func:`plot_db_traces` read out of
+#: :data:`DB_CONFIGS`.  Both ``eps = 0`` rows are baselines to be divided out,
+#: not results: the coherent one carries the accumulated leakage, which drifts
+#: ``P_0`` down on its own and would otherwise be counted as a control-error
+#: signal.
+#: A DB signal saturates: once the accumulated rotation error passes ``pi/2`` the
+#: trace covers the full range of ``P_0`` and stops ordering the waveforms.  The
+#: cycle count at which the signal first crosses this threshold does not
+#: saturate, and is reported alongside it.
+DB_SIGNAL_THRESHOLD = 0.05
+
+DB_LEAKAGE_FLOOR = "coherent, eps=0"
+DB_ENVELOPE = "full, eps=0"
+DB_FULL = ("full, eps=+3%", "full, eps=-3%")
+DB_COHERENT = ("coherent, eps=+3%", "coherent, eps=-3%")
+
+
+def db_sequence(channel, cycles=N_CYCLES, initial_state=None):
+    """Three-level populations after ``n`` DB cycles, for ``n = 0 ... cycles``.
+
+    A cycle is the gate pair, so the sequence channel is ``(channel @ channel)``
+    raised to the ``n``-th power; nothing is re-integrated.  The gate channel
+    already carries the virtual-Z frame update as a left multiplication, and
+    ``(Z U)^n`` is exactly what an experiment does when it shifts the phase of
+    every subsequent drive, so the matrix power is the physical sequence and not
+    an approximation of it.
+
+    Parameters
+    ----------
+    channel : ndarray, shape (9, 9)
+        One calibrated gate, from :func:`gate_channel`.
+    initial_state : ndarray, optional
+        Defaults to ``|0><0|``.
+
+    Returns
+    -------
+    ndarray, shape (cycles + 1, 3)
+        Populations ``(P_0, P_1, P_2)``, row ``n`` after ``n`` cycles.  Row 0 is
+        the input state, so the trace starts at ``P_0 = 1``.
+    """
+    if initial_state is None:
+        initial_state = np.diag([1.0, 0.0, 0.0]).astype(complex)
+    pair = channel @ channel
+    state = np.asarray(initial_state, dtype=complex)
+    populations = np.empty((cycles + 1, 3))
+    populations[0] = np.einsum("ii->i", state).real
+    for index in range(cycles):
+        state = apply_channel(pair, state)
+        populations[index + 1] = np.einsum("ii->i", state).real
+    return populations
+
+
+def db_traces(pulses, device=DEVICE, cycles=N_CYCLES, stride=1,
+              configs=DB_CONFIGS, calibrations=None):
+    """Run the DB sequence for every waveform in every configuration.
+
+    The calibration is done once per waveform -- at ``epsilon = 0``, without
+    dissipation, exactly as in an experiment -- and then held fixed, so the
+    configurations differ only by the error term they switch on.
+
+    Returns
+    -------
+    dict
+        ``{waveform: {"gate_time_ns", "cycles", "elapsed_us",
+        <configuration label>: populations}}``, with ``elapsed_us`` the physical
+        duration ``2 n T_g`` of the sequence in microseconds.
+    """
+    calibrations = calibrations or calibrate_all(pulses, device)
+    cycle_numbers = np.arange(cycles + 1)
+    traces = {}
+    for name, pulse in pulses.items():
+        gate_time = to_physical(pulse, device)["gate_time"]
+        record = {
+            "gate_time_ns": gate_time,
+            "cycles": cycle_numbers,
+            "elapsed_us": 2.0 * cycle_numbers * gate_time / 1e3,
+        }
+        for label, settings in configs:
+            channel = gate_channel(
+                pulse,
+                epsilon=settings["epsilon"],
+                device=_configured(device, settings["static"]),
+                stride=stride,
+                dissipation=settings["dissipation"],
+                calibration=calibrations[name],
+            )
+            record[label] = db_sequence(channel, cycles)
+        traces[name] = record
+    return traces
+
+
+def _cycles_to_threshold(signals, threshold=DB_SIGNAL_THRESHOLD):
+    """Earliest cycle at which any of ``signals`` reaches ``threshold``.
+
+    ``nan`` if none of them ever does, i.e. the sequence never resolved the
+    error at this length.
+    """
+    crossings = [
+        int(found[0])
+        for found in (
+            np.flatnonzero(np.asarray(signal) >= threshold)
+            for signal in signals
+        )
+        if found.size
+    ]
+    return float(min(crossings)) if crossings else float("nan")
+
+
+def db_readout(trace):
+    """The two readouts of one waveform's DB run, plus what they are read against.
+
+    A transmon DB trace is not a single number: decoherence pulls ``P_0`` down
+    whether or not the control is robust, so the coherent signal has to be
+    separated from the envelope it rides on.
+
+    Returns
+    -------
+    dict
+        ``oscillation``
+            Largest ``|P_0(n, +-3%) - P_0(n, 0)|`` over the sequence in the
+            *coherent* configuration: the control-error signal alone, with the
+            incoherent terms switched off and the accumulated leakage divided
+            out.  This is the transmon counterpart of the two-level demo's
+            ``Delta P0``.
+        ``cycles_to_osc``, ``cycles_to_signal``
+            First cycle at which that signal, and the measurable one below,
+            reach :data:`DB_SIGNAL_THRESHOLD`.  A DB signal saturates once the
+            accumulated error passes ``pi/2``, and at ``N = 60`` most of these
+            waveforms are saturated; these two columns keep ordering them after
+            the amplitudes no longer do.  ``nan`` means the sequence never
+            resolved the error at this length.
+        ``envelope_loss``
+            ``1 - P_0`` at the last cycle with ``epsilon = 0`` and the full
+            model on: decoherence, static detuning and leakage, no control
+            error.  This is the floor the signal has to be seen against.
+        ``delta_p0``
+            Peak-to-peak of the *full* ``P_0(n)``, which mixes the two above and
+            is what a raw trace shows.
+        ``signal``
+            ``|P_0(N, +-3%) - P_0(N, 0)|`` at the last cycle -- the envelope
+            divided out at a single point, which is the actual DB discriminator.
+        ``leakage``
+            ``P_2`` at the last cycle, full model.
+        All of them are the worst case over the two error signs.
+    """
+    cycles = len(trace["cycles"]) - 1
+    envelope = trace[DB_ENVELOPE][:, 0]
+    floor = trace[DB_LEAKAGE_FLOOR][:, 0]
+    coherent = [np.abs(trace[label][:, 0] - floor) for label in DB_COHERENT]
+    full = [np.abs(trace[label][:, 0] - envelope) for label in DB_FULL]
+    return {
+        "gate_time_ns": trace["gate_time_ns"],
+        "elapsed_us": float(trace["elapsed_us"][-1]),
+        "oscillation": max(float(signal.max()) for signal in coherent),
+        "cycles_to_osc": _cycles_to_threshold(coherent),
+        "envelope_loss": float(1.0 - envelope[-1]),
+        "delta_p0": max(
+            float(np.ptp(trace[label][:, 0])) for label in DB_FULL
+        ),
+        "signal": max(float(signal[cycles]) for signal in full),
+        "cycles_to_signal": _cycles_to_threshold(full),
+        "leakage": max(
+            float(trace[label][cycles, 2]) for label in DB_FULL
+        ),
+    }
+
+
+def print_db_table(traces):
+    """Print the DB readouts, one row per waveform.
+
+    ``oscillation`` and ``envelope loss`` are the two independent readings; the
+    remaining columns say how they combine in a raw trace.  Comparing
+    ``oscillation`` down a column reproduces the ordering of section 1's
+    control-error closure, and ``envelope loss`` the ordering of the gate times.
+    """
+    readouts = {name: db_readout(trace) for name, trace in traces.items()}
+    cycles = len(next(iter(traces.values()))["cycles"]) - 1
+    label_width = max(len(name) for name in traces) + 2
+
+    percent = f"{DB_SIGNAL_THRESHOLD:.0%}"
+
+    def cycle_count(value):
+        return "  -" if np.isnan(value) else f"{int(value):3d}"
+
+    print(f"DB readout after {cycles} XX cycles ({2 * cycles} gates)")
+    header = (
+        f"{'pulse':{label_width}s}{'Tg [ns]':>9s}{'seq [us]':>10s}"
+        f"{'oscillation':>14s}{f'n@{percent} coh':>12s}"
+        f"{'envelope loss':>15s}"
+        f"{'Delta P0':>11s}{'signal at N':>13s}{f'n@{percent} full':>13s}"
+        f"{'P2(N)':>10s}"
+    )
+    print(header)
+    print("-" * len(header))
+    for name, readout in readouts.items():
+        print(
+            f"{name:{label_width}s}{readout['gate_time_ns']:9.1f}"
+            f"{readout['elapsed_us']:10.2f}"
+            f"{readout['oscillation']:14.3e}"
+            f"{cycle_count(readout['cycles_to_osc']):>12s}"
+            f"{readout['envelope_loss']:15.3e}"
+            f"{readout['delta_p0']:11.3e}{readout['signal']:13.3e}"
+            f"{cycle_count(readout['cycles_to_signal']):>13s}"
+            f"{readout['leakage']:10.2e}"
+        )
+    print()
+    print(
+        "oscillation   = max_n |P0(n,+-3%) - P0(n,0)| with the dissipator and\n"
+        "                delta_z off, so only the control error is left;\n"
+        f"n@{percent}         = first cycle at which that signal reaches "
+        f"{percent}; it keeps ordering\n"
+        "                the waveforms after the amplitudes have saturated "
+        "('-' = never);\n"
+        "envelope loss = 1 - P0(N) at eps = 0 with the full model on;\n"
+        "Delta P0      = peak-to-peak of the raw full trace, as in the "
+        "two-level demo;\n"
+        "signal at N   = |P0(N, +-3%) - P0(N, 0)|, i.e. the envelope divided out."
+    )
+    return readouts
+
+
+def verify_db_sequence(pulses, device=DEVICE, traces=None, cycles=N_CYCLES,
+                       strides=(1, 2), check_cycles=(1, 2, 4, 8),
+                       calibrations=None):
+    """Check the sequence layer: right, then accurate.
+
+    Five checks, each isolating one thing the sequence layer could get wrong:
+
+    1. **Vectorization and the power itself.** ``qutip`` is asked to raise its
+       own superoperator to the same power and propagate a ``Qobj`` state; it
+       carries its own ``dims``/``superrep`` bookkeeping, so agreeing with it
+       tests the convention independently of this module.
+    2. **Coherent limit against the two-level demo.** With the dissipator and
+       the static detuning off, the trace should reproduce the demo's
+       ``Delta P0`` up to what three levels and the calibration add.  Not
+       asserted -- the two models genuinely differ -- but the ordering and the
+       order of magnitude must survive.
+    3. **How each channel accumulates.** ``1 - F`` of the whole sequence
+       (target ``X^{2n} = I``) is fitted to a power law in ``n`` for the two
+       error terms separately.  An incoherent term adds in probability and gives
+       slope 1; a coherent one adds in amplitude and gives slope 2; a term the
+       ``XX`` train echoes away gives slope 0.  This is the sequence-level test
+       of section 2.5's claim that the static detuning is the coherent one.
+    4. **Sequence against single gate.** The coherent signal must be section 2's
+       single-gate rotation error added in amplitude, ``sin^2(n theta_g)`` with
+       ``theta_g`` read off the per-gate infidelity increment.  This is the one
+       check that crosses layers instead of testing the sequence against itself.
+    5. **Discretization.** The readouts must be stable against subsampling the
+       integration grid.
+
+    Every check prints its residual; nothing is asserted silently.
+    """
+    import qutip as qt
+
+    calibrations = calibrations or calibrate_all(pulses, device)
+    traces = traces or db_traces(
+        pulses, device, cycles, calibrations=calibrations
+    )
+
+    print(f"1. matrix power vs qutip's own superoperator power, n = {cycles}")
+    print(f"{'pulse':26s}{'P0 (numpy)':>14s}{'P0 (qutip)':>14s}"
+          f"{'difference':>13s}")
+    initial = qt.basis(3, 0) * qt.basis(3, 0).dag()
+    for name, pulse in pulses.items():
+        channel = gate_channel(
+            pulse, device.control_error, device,
+            calibration=calibrations[name],
+        )
+        ours = db_sequence(channel, cycles)[-1, 0]
+        superoperator = as_qobj(channel @ channel) ** cycles
+        theirs = qt.vector_to_operator(
+            superoperator * qt.operator_to_vector(initial)
+        ).full()[0, 0].real
+        print(f"{name:26s}{ours:14.10f}{theirs:14.10f}{ours - theirs:13.2e}")
+
+    print()
+    print("2. coherent limit vs the two-level demo's Delta P0")
+    print(f"{'pulse':26s}{'ptp (3 level)':>15s}{'ptp (2 level)':>15s}"
+          f"{'ratio':>10s}")
+    for name, pulse in pulses.items():
+        ours = max(
+            float(np.ptp(traces[name][label][:, 0])) for label in DB_COHERENT
+        )
+        two_level = max(
+            float(
+                np.ptp(
+                    db_helpers.db_trace(
+                        db_helpers.time_ordered_gate(pulse, sign * device.control_error),
+                        cycles,
+                    )
+                )
+            )
+            for sign in (+1, -1)
+        )
+        ratio = ours / two_level if two_level > 0 else float("nan")
+        print(f"{name:26s}{ours:15.3e}{two_level:15.3e}{ratio:10.2e}")
+    print(
+        "   A ratio far above one is not a numerical discrepancy: on three "
+        "levels the injected\n   epsilon also rescales the Stark shift, i.e. it "
+        "adds an epsilon-dependent Z term that\n   the two-level control-error "
+        "curve does not contain and cannot be robust against."
+    )
+
+    print()
+    print("3. accumulation over the sequence: fitted slope of the 1-F "
+          f"*increment* vs n at n = {check_cycles}")
+    print("   (1 = incoherent, adds in probability;  2 = coherent, adds in "
+          "amplitude;  0 = echoed away)")
+    print("   The leakage-only sequence of the same length is subtracted, "
+          "otherwise every\n   slope is a mixture of the term under test and "
+          "the leakage floor.  The XX train\n   echoes delta_z, so its residual "
+          "need not be first order in delta_z and its slope\n   need not be 2; "
+          "a negative increment (slope printed as nan) means the echoed\n   "
+          "sequence is *better* than the leakage floor at those n.")
+    identity = np.eye(2, dtype=complex)
+    terms = (
+        ("T1/T2 only", dict(epsilon=0.0, dissipation=True, static=False)),
+        ("delta_z only", dict(epsilon=0.0, dissipation=False, static=True)),
+        ("eps=+3% only", dict(epsilon=+0.03, dissipation=False, static=False)),
+    )
+    baseline_settings = dict(epsilon=0.0, dissipation=False, static=False)
+
+    def sequence_infidelities(pulse, calibration, settings):
+        """``1 - F`` of the ``2n``-gate sequence, target ``X^{2n} = I``."""
+        channel = gate_channel(
+            pulse, settings["epsilon"],
+            _configured(device, settings["static"]),
+            stride=1, dissipation=settings["dissipation"],
+            calibration=calibration,
+        )
+        pair = channel @ channel
+        return np.array([
+            1.0 - subspace_gate_fidelity(
+                np.linalg.matrix_power(pair, count), target=identity
+            )
+            for count in check_cycles
+        ])
+
+    header = f"{'pulse':26s}" + "".join(
+        f"{f'{label}: slope':>21s}{f'inc(n={check_cycles[-1]})':>14s}"
+        for label, _ in terms
+    )
+    print(header)
+    for name, pulse in pulses.items():
+        calibration = calibrations[name]
+        baseline = sequence_infidelities(pulse, calibration, baseline_settings)
+        row = f"{name:26s}"
+        for _, settings in terms:
+            increment = sequence_infidelities(pulse, calibration, settings)
+            increment = increment - baseline
+            if increment.min() <= 0.0:
+                slope = float("nan")
+            else:
+                slope = np.polyfit(
+                    np.log(check_cycles), np.log(increment), 1
+                )[0]
+            row += f"{slope:21.2f}{increment[-1]:14.2e}"
+        print(row)
+
+    print()
+    print("4. the sequence signal against the single-gate error of section 2")
+    print("   A per-gate over-rotation theta_g costs 1-F = theta_g^2/6, and the "
+          "XX pair leaves\n   2 theta_g behind, so after n cycles "
+          "P0 = cos^2(n theta_g) and the signal is\n   sin^2(n theta_g).  "
+          "theta_g is taken from the coherent single-gate infidelity\n   "
+          "increment; the prediction is exact only while the error is a pure "
+          "over-rotation\n   about the drive axis, which is why the ratio drifts "
+          "where epsilon also tilts the axis.")
+    header = (
+        f"{'pulse':26s}{'theta_g [rad]':>14s}"
+        + "".join(
+            f"{f'meas/pred n={count}':>19s}" for count in check_cycles
+        )
+    )
+    print(header)
+    for name, pulse in pulses.items():
+        calibration = calibrations[name]
+        coherent = _configured(device, detuning=False)
+        infidelities = [
+            1.0 - subspace_gate_fidelity(
+                gate_channel(
+                    pulse, epsilon, coherent, stride=1, dissipation=False,
+                    calibration=calibration,
+                )
+            )
+            for epsilon in (0.0, device.control_error)
+        ]
+        theta = np.sqrt(6.0 * max(infidelities[1] - infidelities[0], 0.0))
+        floor = traces[name][DB_LEAKAGE_FLOOR][:, 0]
+        signal = np.abs(traces[name][DB_COHERENT[0]][:, 0] - floor)
+        row = f"{name:26s}{theta:14.4f}"
+        for count in check_cycles:
+            predicted = np.sin(count * theta) ** 2
+            ratio = signal[count] / predicted if predicted > 0 else float("nan")
+            row += f"{ratio:19.2f}"
+        print(row)
+
+    print()
+    print("5. discretization: the two readouts against the integration stride")
+    header = f"{'pulse':26s}" + "".join(
+        f"{f'osc (s={s})':>14s}{f'env (s={s})':>14s}" for s in strides
+    )
+    print(header)
+    for name, pulse in pulses.items():
+        row = f"{name:26s}"
+        for stride in strides:
+            single = db_traces(
+                {name: pulse}, device, cycles, stride=stride,
+                calibrations={name: calibrations[name]},
+            )[name]
+            readout = db_readout(single)
+            row += f"{readout['oscillation']:14.4e}"
+            row += f"{readout['envelope_loss']:14.4e}"
+        print(row)
+
+
 # --- plots --------------------------------------------------------------------
 
 
@@ -1567,6 +2007,112 @@ def plot_error_budget(budget, configs=BUDGET_CONFIGS, colors=None):
     lower, upper = axis.get_ylim()
     axis.set_ylim(lower, upper * 60)
     axis.legend(fontsize=7.5, ncol=3, loc="upper left", framealpha=0.95)
+    figure.tight_layout()
+    return figure
+
+
+#: Line styles of the two error signs in the DB panels, kept identical to the
+#: two-level demo so the two notebooks' figures can be read side by side: the
+#: open circles are ``-3%`` and stay visible where the two signs overlap.
+DB_STYLES = {
+    "full, eps=+3%": dict(linestyle="-", linewidth=2.6, alpha=0.60, zorder=2),
+    "full, eps=-3%": dict(
+        linestyle="-", linewidth=1.2, marker="o", markevery=6, markersize=5,
+        markerfacecolor="white", markeredgewidth=1.2, zorder=3,
+    ),
+}
+
+
+def plot_db_traces(traces, device=DEVICE, colors=None):
+    """The four views of one DB run.
+
+    (a) ``P_0`` against cycle number, the standard DB readout, with the
+    ``epsilon = 0`` decay envelope dashed underneath each pair of traces.
+    (b) the same curves against the sequence's physical duration -- each
+    waveform has its own ``T_g``, so a shared second axis on (a) would be
+    meaningless and this is the honest form of it: it is where the gate-time
+    price of robustness becomes visible.
+    (c) leakage accumulated over the sequence.
+    (d) the control-error signal with the envelope divided out,
+    ``|P_0(n, +-3%) - P_0(n, 0)|``, on a log axis -- the only panel in which
+    five orders of magnitude of robustness fit at once.
+    """
+    import matplotlib.pyplot as plt
+
+    colors = colors or color_cycle(traces)
+    figure, axes = plt.subplots(2, 2, figsize=(11.5, 7.6))
+    (top_left, top_right), (bottom_left, bottom_right) = axes
+
+    for name, trace in traces.items():
+        color = colors[name]
+        cycle_numbers = trace["cycles"]
+        elapsed = trace["elapsed_us"]
+        envelope = trace[DB_ENVELOPE][:, 0]
+        top_left.plot(
+            cycle_numbers, envelope, color=color, linestyle="--",
+            linewidth=1.0, alpha=0.9, zorder=1,
+        )
+        top_right.plot(
+            elapsed, envelope, color=color, linestyle="--", linewidth=1.0,
+            alpha=0.9, zorder=1,
+        )
+        for label in DB_FULL:
+            populations = trace[label]
+            top_left.plot(
+                cycle_numbers, populations[:, 0], color=color,
+                label=f"{name}, {label.split(', ')[1]}", **DB_STYLES[label],
+            )
+            top_right.plot(
+                elapsed, populations[:, 0], color=color, **DB_STYLES[label]
+            )
+            # The log panels start at n = 1: at n = 0 nothing has been applied
+            # yet and both quantities are identically zero, which would drag the
+            # axis down by ten decades.
+            bottom_right.semilogy(
+                cycle_numbers[1:],
+                np.maximum(np.abs(populations[1:, 0] - envelope[1:]), 1e-16),
+                color=color, **DB_STYLES[label],
+            )
+        bottom_left.semilogy(
+            cycle_numbers[1:],
+            np.maximum(trace[DB_FULL[0]][1:, 2], 1e-12),
+            color=color, linewidth=1.4,
+            label=f"{name}, $T_g$={trace['gate_time_ns']:.0f} ns",
+        )
+
+    top_left.set(
+        title="(a) DB readout: return probability against cycle count",
+        xlabel="XX cycle count $n$", ylabel="$P_0$", ylim=(-0.03, 1.02),
+    )
+    top_right.set(
+        title="(b) the same traces against physical sequence duration",
+        xlabel=r"elapsed time $2nT_g$ [$\mu$s]", ylabel="$P_0$",
+        ylim=(-0.03, 1.02),
+    )
+    bottom_left.set(
+        title="(c) leakage accumulated over the sequence",
+        xlabel="XX cycle count $n$", ylabel=r"$P_2$",
+    )
+    bottom_right.set(
+        title="(d) control-error signal, envelope divided out",
+        xlabel="XX cycle count $n$",
+        ylabel=r"$|P_0(n,\pm3\%)-P_0(n,0)|$",
+    )
+    # Both axes logarithmic: the signal grows as n^2 before it saturates, so the
+    # ranking of the waveforms is the horizontal offset between parallel lines at
+    # small n, and that is where it is readable.
+    bottom_right.set_xscale("log")
+    for axis in axes.ravel():
+        axis.grid(alpha=0.25, which="both")
+    top_left.legend(fontsize=7, ncol=2, loc="lower left", framealpha=0.95)
+    bottom_left.legend(fontsize=7, loc="lower right", framealpha=0.95)
+    figure.suptitle(
+        "1qb-DB on a transmon: dashed = decay envelope at "
+        r"$\epsilon=0$, thick = $+3\%$, circles = $-3\%$  "
+        f"($T_1$=$T_2$={device.t1 / 1e3:.0f} us, "
+        rf"$\delta_z/2\pi$={device.static_detuning * 1e3:.1f} MHz)",
+        fontsize=10,
+    )
     figure.tight_layout()
     return figure
 

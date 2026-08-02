@@ -88,6 +88,38 @@ qubit subspace with the leakage loss divided out, so that the calibration cannot
 exploit the narrow leakage nulls. The injected \(\epsilon\) is applied on top of
 the calibrated amplitude. No DRAG is applied anywhere.
 
+## The DB sequence on a transmon (transmon notebook, section 3)
+
+One DB cycle is the gate pair \(XX\), so \(n=60\) cycles is 120 gates and the
+sequence is the matrix power \((\Lambda^2)^n\) of the single-gate channel. The
+virtual \(Z\) of the calibration enters that channel as a left multiplication, and
+\((ZU)^n\) is what an instrument does when it shifts the phase of every subsequent
+drive, so the power is the physical sequence rather than an approximation of it.
+
+Six configurations are run so that the readout can be decomposed: `coherent` (both
+signs of \(\epsilon\) plus \(\epsilon=0\), dissipator and \(\delta_z\) off) isolates
+the control-error signal with the accumulated leakage divided out, and `full` gives
+the trace an experiment sees together with its \(\epsilon=0\) decay envelope. Two
+quantities are reported rather than one \(\Delta P_0\) — the oscillation amplitude
+and the envelope loss — plus the cycle count at which the signal first reaches 5%,
+because at 120 gates every amplitude here has saturated.
+
+| waveform | \(T_g\) [ns] | \(\theta_g\) from the closure | \(\theta_g\) measured | \(n\) at 5% | envelope loss |
+|---|---:|---:|---:|---:|---:|
+| Gaussian | 22.3 | \(9.42\times10^{-2}\) | \(9.34\times10^{-2}\) | 3 | \(2.4\times10^{-2}\) |
+| resonant composite | 100.0 | \(1.41\times10^{-4}\) | \(3.52\times10^{-2}\) | 13 | \(9.8\times10^{-2}\) |
+| BARQ resonant robust | 90.8 | \(1.69\times10^{-4}\) | \(6.87\times10^{-2}\) | 3 | \(1.0\times10^{-1}\) |
+
+The two-level control-error closure predicts the per-gate rotation error to 1% for
+the Gaussian and is wrong by two orders of magnitude for every waveform designed to
+be robust, because \(\epsilon\) also rescales the Stark shift
+\(\Omega^2/4\lvert\alpha\rvert\) and the drive-frequency knob cancels that only at
+\(\epsilon=0\). The residual is first order in \(\epsilon\) however well the curve
+closes. The composite's five-orders-of-magnitude advantage in the two-level demo
+therefore survives only as a factor 4.3 in the cycle count needed to build a 5%
+signal. The static detuning, in contrast, is echoed away by the 120-gate \(X\)
+train and stays four orders below the control error.
+
 ## Error-curve geometry
 
 The injected error is multiplicative, so the relevant curve integrates the
