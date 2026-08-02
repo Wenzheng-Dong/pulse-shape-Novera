@@ -199,8 +199,11 @@ def calculate_error_curves(pulses, noise="amplitude"):
     }
 
 
-def plot_error_curves(curves):
+def plot_error_curves(curves, colors=None):
     """Show the error curves in 3D together with their plane projections.
+
+    ``colors`` defaults to :data:`PULSE_COLORS`; pass a ``{name: colour}`` map
+    (e.g. ``db_transmon.color_cycle``) for waveforms the demo does not name.
 
     The wide translucent line, the thin line and the dashed line let the
     curves stay visible where they overlap, as in the DB comparison plot.
@@ -215,6 +218,7 @@ def plot_error_curves(curves):
     """
     import matplotlib.pyplot as plt
 
+    colors = colors or PULSE_COLORS
     # (horizontal axis, vertical axis, area component carried by the plane)
     projections = ((0, 1, "xy"), (1, 2, "yz"), (2, 0, "zx"))
     labels = ("x", "y", "z")
@@ -234,7 +238,7 @@ def plot_error_curves(curves):
     space_axis = figure.add_subplot(2, 2, 1, projection="3d")
     for index, (name, result) in enumerate(curves.items()):
         curve = result["curve"]
-        color = PULSE_COLORS[name]
+        color = colors[name]
         style = styles[index % len(styles)]
         label = f"{name}, $|R(T)-R(0)|$={result['closure']:.1e}"
         space_axis.plot(*curve.T, color=color, label=label, **style)
@@ -265,7 +269,7 @@ def plot_error_curves(curves):
         axis = figure.add_subplot(2, 2, index + 2)
         for order, (name, result) in enumerate(curves.items()):
             curve = result["curve"]
-            color = PULSE_COLORS[name]
+            color = colors[name]
             style = styles[order % len(styles)]
             axis.plot(
                 curve[:, i], curve[:, j], color=color, label=name, **style
@@ -294,7 +298,7 @@ def plot_error_curves(curves):
                 0.96 - 0.07 * row,
                 f"$A_{{{plane}}}$={result['area'][(i + 2) % 3]:+.2e}",
                 transform=axis.transAxes,
-                color=PULSE_COLORS[name],
+                color=colors[name],
                 fontsize=8,
                 verticalalignment="top",
             )

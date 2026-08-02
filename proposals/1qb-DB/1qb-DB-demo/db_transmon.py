@@ -458,6 +458,54 @@ def print_metrics_table(pulses, device=DEVICE):
     return metrics
 
 
+#: Compact geometry table for a presentation: one column per geometric cost, in
+#: the order they are usually explained -- what the drive costs, then how the
+#: pulse survives each noise channel at first and second order.  A subset of
+#: :data:`METRIC_GROUPS`, which is the full diagnostic version.
+GEOMETRY_COLUMNS = (
+    ("gate_time_ns", "Tg [ns]", "{:9.1f}"),
+    ("peak_Tg_omega", "Tg*Om_max", "{:11.2f}"),
+    ("pulse_area", "int|Om|dt / pi", "{:16.2f}"),
+    ("closure", "ctrl closure", "{:14.2e}"),
+    ("area_norm", "ctrl |A|", "{:11.2e}"),
+    ("dephasing_closure", "deph closure", "{:14.2e}"),
+    ("leakage_P2", "P2", "{:10.1e}"),
+)
+
+
+def print_geometry_table(pulses, device=DEVICE, metrics=None,
+                         columns=GEOMETRY_COLUMNS):
+    """Print the geometric costs of each waveform, one row per pulse.
+
+    The short form of :func:`print_metrics_table`, for readers who want the
+    costs rather than the full two-channel, two-order diagnostic.  Everything
+    except ``Tg`` and ``P2`` is dimensionless and gauge invariant: rescaling a
+    space curve trades ``Tg`` against ``Omega`` and leaves the rest untouched.
+    """
+    metrics = metrics or {
+        name: pulse_metrics(pulse, device) for name, pulse in pulses.items()
+    }
+    label_width = max(len(name) for name in metrics) + 2
+    print(
+        f"peak drive fixed at Omega_max/2pi = {device.rabi_max * 1e3:.0f} MHz,"
+        f"  alpha/2pi = {device.anharmonicity * 1e3:.0f} MHz"
+    )
+    header = f"{'pulse':{label_width}s}" + "".join(
+        f"{title:>{len(fmt.format(0.0))}s}" for _, title, fmt in columns
+    )
+    print(header)
+    print("-" * len(header))
+    for name, values in metrics.items():
+        row = f"{name:{label_width}s}"
+        for key, _, fmt in columns:
+            value = values[key]
+            if key == "pulse_area":
+                value = value / np.pi
+            row += fmt.format(value)
+        print(row)
+    return metrics
+
+
 # --- noise model: Lindblad + static detuning ----------------------------------
 
 #: Ladder operators of the three-level transmon.  ``LOWER`` is the truncated
@@ -2023,7 +2071,7 @@ DB_STYLES = {
 }
 
 
-def plot_db_traces(traces, device=DEVICE, colors=None):
+def plot_db_traces(traces, device=DEVICE, colors=None, layout="grid"):
     """The four views of one DB run.
 
     (a) ``P_0`` against cycle number, the standard DB readout, with the
@@ -2036,12 +2084,27 @@ def plot_db_traces(traces, device=DEVICE, colors=None):
     (d) the control-error signal with the envelope divided out,
     ``|P_0(n, +-3%) - P_0(n, 0)|``, on a log axis -- the only panel in which
     five orders of magnitude of robustness fit at once.
+
+    ``layout`` is ``"grid"`` for the 2x2 arrangement or ``"tall"`` for three
+    rows, which gives the two ``P_0`` panels the full width; the tall form is
+    less crowded once several waveforms are overlaid.
     """
     import matplotlib.pyplot as plt
 
     colors = colors or color_cycle(traces)
-    figure, axes = plt.subplots(2, 2, figsize=(11.5, 7.6))
-    (top_left, top_right), (bottom_left, bottom_right) = axes
+    if layout == "tall":
+        figure = plt.figure(figsize=(11.5, 11.5))
+        grid = figure.add_gridspec(3, 2)
+        top_left = figure.add_subplot(grid[0, :])
+        top_right = figure.add_subplot(grid[1, :])
+        bottom_left = figure.add_subplot(grid[2, 0])
+        bottom_right = figure.add_subplot(grid[2, 1])
+        axes = np.array([top_left, top_right, bottom_left, bottom_right])
+    elif layout == "grid":
+        figure, axes = plt.subplots(2, 2, figsize=(11.5, 7.6))
+        (top_left, top_right), (bottom_left, bottom_right) = axes
+    else:
+        raise ValueError(f"unknown layout {layout!r}; use 'grid' or 'tall'")
 
     for name, trace in traces.items():
         color = colors[name]

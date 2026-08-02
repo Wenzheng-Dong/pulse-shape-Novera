@@ -7,12 +7,20 @@ validated from a clean Python namespace.
 The numerical propagation, plotting, reporting, and validation functions live
 in [`db_helpers.py`](db_helpers.py), keeping the notebook cells short.
 
-## Two notebooks
+## Three notebooks
 
 | notebook | model | helper module |
 |---|---|---|
 | [`1qb-DB-demo.ipynb`](1qb-DB-demo.ipynb) | two-level, dimensionless | `db_helpers.py` |
 | [`1qb-DB-transmon.ipynb`](1qb-DB-transmon.ipynb) | three-level transmon, laboratory units | `db_transmon.py` |
+| [`1qb-DB-transmon-summary.ipynb`](1qb-DB-transmon-summary.ipynb) | the same, trimmed for presentation | `db_transmon.py` |
+
+The summary notebook is a strict subset of the transmon one: three waveforms
+(Gaussian, resonant composite, BARQ resonant robust), the error-curve figure with a
+one-table glossary of the geometric costs, the calibration result without its
+diagnostics, and the DB figure and readouts. It re-optimizes nothing and introduces
+no model of its own — it is meant for readers who know transmon calibration and DB
+but not the space-curve language.
 
 The transmon notebook reuses the same waveform CSVs and the same error-curve
 machinery, and adds what a two-level picture cannot express: leakage to
