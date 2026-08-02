@@ -7,6 +7,23 @@ validated from a clean Python namespace.
 The numerical propagation, plotting, reporting, and validation functions live
 in [`db_helpers.py`](db_helpers.py), keeping the notebook cells short.
 
+## Two notebooks
+
+| notebook | model | helper module |
+|---|---|---|
+| [`1qb-DB-demo.ipynb`](1qb-DB-demo.ipynb) | two-level, dimensionless | `db_helpers.py` |
+| [`1qb-DB-transmon.ipynb`](1qb-DB-transmon.ipynb) | three-level transmon, laboratory units | `db_transmon.py` |
+
+The transmon notebook reuses the same waveform CSVs and the same error-curve
+machinery, and adds what a two-level picture cannot express: leakage to
+$\lvert2\rangle$ and a physical gate duration. It fixes the remaining gauge
+freedom by driving every pulse at the same peak Rabi rate, so the cost of
+robustness shows up as gate time. New candidates it optimizes are written to
+`transmon_waveforms/` by
+[`generate_transmon_waveforms.py`](generate_transmon_waveforms.py); the
+checksum-managed store in `../X_gate_pulse_generation/waveforms/` is read-only
+from here.
+
 ## Inputs
 
 Import from

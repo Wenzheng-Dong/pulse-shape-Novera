@@ -1,0 +1,174 @@
+{
+  "format_version": 1,
+  "purpose": "resonant, first-order amplitude-robust X(pi) candidates for the three-level transmon comparison",
+  "barq": {
+    "n_free_points": 10,
+    "seed": 4531469,
+    "norm_value": 0.25,
+    "learning_rate": 0.001,
+    "warm_start": "barq_amplitude_robust_params.npz",
+    "detuning_schedule": [
+      [
+        0.01,
+        800
+      ],
+      [
+        1.0,
+        800
+      ],
+      [
+        100.0,
+        800
+      ]
+    ],
+    "control_mode": "resTTC",
+    "samples": 2501
+  },
+  "cost": "1000.0*C_tantrix_hat + w_amp*(C_energy_hat + C_max_amp_hat) + w_delta*(Tg*Delta_TTC)^2, w_delta escalated in place",
+  "amp_weights": [
+    0.01,
+    0.1,
+    1.0
+  ],
+  "closure_target": 0.01,
+  "candidates": {
+    "BARQ resonant robust (w_amp=0.01)": {
+      "stem": "barq_resonant_robust_a0.01",
+      "tantrix_weight": 1000.0,
+      "amp_weight": 0.01,
+      "detuning_schedule": [
+        [
+          0.01,
+          800
+        ],
+        [
+          1.0,
+          800
+        ],
+        [
+          100.0,
+          800
+        ]
+      ],
+      "escalation_trace": null,
+      "reused_saved_parameters": true,
+      "normalized_geometry_costs": {
+        "closure": 0.0,
+        "curve_area": 0.015155463294349988,
+        "energy": 61.66303225957863,
+        "tantrix": 0.001491623300309796,
+        "max_amp": 73.26077328629047
+      },
+      "tantrix_area_norm": 0.12133314423316079,
+      "TTC_detuning_squared": 0.003687580005781002,
+      "exported_resonant": {
+        "peak_Tg_omega": 229.6569202685,
+        "pulse_area": 11.968552020827756,
+        "energy": 608.5859538591294,
+        "closure": 0.19364152163354306,
+        "area_norm": 3.6942103936900494,
+        "dephasing_closure": 0.005165296250773432,
+        "dephasing_area_norm": 0.01888461585685573,
+        "zero_error_infidelity": 7.094008821317832e-05,
+        "gate_time_ns": 731.0206815198612,
+        "drive_over_alpha": 0.25,
+        "leakage_P2_first_order": 0.010035884939333078,
+        "leakage_P2": 0.0028970556323222644,
+        "Tg_over_T1": 0.01218367802533102,
+        "Tg_over_T2": 0.01218367802533102
+      }
+    },
+    "BARQ resonant robust (w_amp=0.1)": {
+      "stem": "barq_resonant_robust_a0.1",
+      "tantrix_weight": 1000.0,
+      "amp_weight": 0.1,
+      "detuning_schedule": [
+        [
+          0.01,
+          800
+        ],
+        [
+          1.0,
+          800
+        ],
+        [
+          100.0,
+          800
+        ]
+      ],
+      "escalation_trace": null,
+      "reused_saved_parameters": true,
+      "normalized_geometry_costs": {
+        "closure": 0.0,
+        "curve_area": 0.0063679693839983455,
+        "energy": 19.4622994640212,
+        "tantrix": 2.3977316999601256e-06,
+        "max_amp": 9.075269517080692
+      },
+      "tantrix_area_norm": 0.004864633936747752,
+      "TTC_detuning_squared": 2.409823733616658e-06,
+      "exported_resonant": {
+        "peak_Tg_omega": 28.51153673204,
+        "pulse_area": 10.249602930332697,
+        "energy": 192.08416285482838,
+        "closure": 0.005637321841104413,
+        "area_norm": 3.873343469775443,
+        "dephasing_closure": 5.078458213660684e-05,
+        "dephasing_area_norm": 0.01625063070794671,
+        "zero_error_infidelity": 5.282606574397164e-10,
+        "gate_time_ns": 90.7550401210062,
+        "drive_over_alpha": 0.25,
+        "leakage_P2_first_order": 0.010243509630244587,
+        "leakage_P2": 0.0234432906769792,
+        "Tg_over_T1": 0.00151258400201677,
+        "Tg_over_T2": 0.00151258400201677
+      }
+    },
+    "BARQ resonant robust (w_amp=1)": {
+      "stem": "barq_resonant_robust_a1",
+      "tantrix_weight": 1000.0,
+      "amp_weight": 1.0,
+      "detuning_schedule": [
+        [
+          0.01,
+          800
+        ],
+        [
+          1.0,
+          800
+        ],
+        [
+          100.0,
+          800
+        ]
+      ],
+      "escalation_trace": null,
+      "reused_saved_parameters": true,
+      "normalized_geometry_costs": {
+        "closure": 0.0,
+        "curve_area": 0.005542376761402739,
+        "energy": 14.825115535770212,
+        "tantrix": 2.8185300350910862e-05,
+        "max_amp": 6.311230137776922
+      },
+      "tantrix_area_norm": 0.01667866194841107,
+      "TTC_detuning_squared": 1.81929779058033e-05,
+      "exported_resonant": {
+        "peak_Tg_omega": 19.82711115275,
+        "pulse_area": 10.039538469066713,
+        "energy": 146.31736649455135,
+        "closure": 0.01969831390594417,
+        "area_norm": 3.697212856970474,
+        "dephasing_closure": 0.0001837388246304187,
+        "dephasing_area_norm": 0.021640886367310506,
+        "zero_error_infidelity": 7.51280149202671e-11,
+        "gate_time_ns": 63.111654943852194,
+        "drive_over_alpha": 0.25,
+        "leakage_P2_first_order": 0.023804939772371966,
+        "leakage_P2": 0.004326318230350322,
+        "Tg_over_T1": 0.00105186091573087,
+        "Tg_over_T2": 0.00105186091573087
+      }
+    }
+  }
+}
