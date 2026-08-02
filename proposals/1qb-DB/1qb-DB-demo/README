@@ -55,6 +55,39 @@ The DB curves are calculated from the waveform Hamiltonians rather than an
 analytic pulse-area formula. The results reproduce the validation values
 recorded in `metadata.json`. Run all cells using the `curve` environment.
 
+## Transmon error model (transmon notebook, section 2)
+
+Fixed once in `db_transmon.TransmonDevice`, never swept:
+
+| term | value | enters as |
+|---|---|---|
+| anharmonicity | \(\alpha/2\pi=-200\) MHz | \(\alpha\lvert2\rangle\langle2\rvert\) |
+| peak drive | \(\Omega_{\max}/2\pi=50\) MHz | gauge fixing; sets each \(T_g\) |
+| relaxation | \(T_1=60\) µs | \(\sqrt{\Gamma_1}\,a\), \(a=\lvert0\rangle\langle1\rvert+\sqrt2\lvert1\rangle\langle2\rvert\) |
+| pure dephasing | \(T_2^{\rm echo}=60\) µs | \(\sqrt{2\Gamma_\phi}\,\hat n\), \(\Gamma_\phi=1/T_2-1/2T_1\) |
+| static detuning | \(\delta_z/2\pi=0.1\) MHz | \(-\delta_z\hat n\); quasi-static, partly echoed by the sequence |
+| control error | \(\epsilon=\pm3\%\) | \((\Omega_x,\Omega_y)\to(1+\epsilon)(\Omega_x,\Omega_y)\) |
+
+The Lindblad \(T_2\) and the static \(\delta_z\) are separate channels on
+purpose: only the second one is coherent, and only the second one is the channel
+whose geometry the error curves above describe.
+
+One gate is compressed into a single \(9\times9\) quantum channel
+(`gate_channel`), so a sequence of \(n\) gates is a matrix power rather than a
+re-integration.
+
+**Calibration.** The waveforms are exact \(X(\pi)\) in the two-level model but
+not on three levels: at \(\Omega_{\max}/\lvert\alpha\rvert=0.25\) the
+\(\lvert2\rangle\) level Stark-shifts the 0–1 transition during the pulse (the
+second-order repulsion \(\Omega^2/2\lvert\alpha\rvert\approx6\) MHz) and tilts
+the rotation axis out of the equator, by \(0.21\) rad for the Gaussian —
+several times the injected \(3\%\). `calibrate` removes this with the three
+knobs a laboratory has (drive amplitude, drive frequency, virtual Z), bounded to
+\(\pm25\%\) and \(\pm30\) MHz, and minimizes the rotation error *inside* the
+qubit subspace with the leakage loss divided out, so that the calibration cannot
+exploit the narrow leakage nulls. The injected \(\epsilon\) is applied on top of
+the calibrated amplitude. No DRAG is applied anywhere.
+
 ## Error-curve geometry
 
 The injected error is multiplicative, so the relevant curve integrates the
