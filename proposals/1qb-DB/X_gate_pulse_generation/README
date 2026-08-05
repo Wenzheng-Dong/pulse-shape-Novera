@@ -73,3 +73,57 @@ conda run -n curve python \
 Add `--reoptimize` only when intentionally searching for new composite phases.
 The older BARQ/TTC files remain for comparison and are not selected for this
 experiment.
+
+## AWG-rate export
+
+The files above use a *normalized* time column, `time_over_Tg` in \([0,1]\), on
+a 2501-point grid. That is an integration and plotting resolution, not a sample
+rate, and it carries no information about the gate duration. For an AWG the
+pulse must be resampled onto the instrument clock:
+
+```bash
+conda run -n curve python \
+  proposals/1qb-DB/X_gate_pulse_generation/export_coarse_waveform.py
+```
+
+The default matches the instrument in use, \(T_g=100\) ns at 1 GSa/s, and
+writes [`waveforms/resonant_composite_robust_x_pi_100samples_1GSa.csv`](waveforms/resonant_composite_robust_x_pi_100samples_1GSa.csv)
+with columns
+
+```text
+sample_index,t_ns,I_norm,Q_norm,rabi_x_MHz,rabi_y_MHz,rabi_envelope_MHz,phase_rad
+```
+
+`I_norm`/`Q_norm` are scaled so the envelope peaks at 1.0; the `*_MHz` columns
+are the same waveform expressed as an ordinary Rabi frequency
+\(\Omega/2\pi\). Feed I and Q to the two mixer quadratures; there is no
+detuning and no phase to program separately, since the segment phases are
+already folded into I/Q. Peak drive is \(\Omega/2\pi=49.92\) MHz, a consequence
+of the \(5\pi\) total rotation area — at \(T_g=100\) ns this pulse needs
+\(4.5\times\) the Gaussian peak amplitude. `--gate-ns` trades that peak against
+duration.
+
+### Why 100 samples loses nothing
+
+The candidate is analytic: four `sin^2` segments of 20/20/40/20 ns with
+constant phase within each segment. Within a segment the Hamiltonians at
+different times commute, so the segment unitary depends only on the
+accumulated area \(\int\Omega\,dt\); and a uniform sum of `sin^2` over a whole
+number \(N>1\) of samples reproduces that area exactly, for any sampling
+offset, because \(\sum_n\cos(2\pi(n+a)/N)=0\). Both conditions hold on the 1 ns
+grid, so the zero-order-hold staircase implements the ideal composite unitary
+to machine precision, at every amplitude error.
+
+`verify_coarse_waveform.py` checks this end to end and prints:
+
+| quantity | 100 samples @ 1 GSa/s | analytic composite |
+|---|---:|---:|
+| total rotation area | \(5\pi\) to \(4\times10^{-16}\) rad | \(5\pi\) |
+| \(\lVert U-U_{\rm exact}\rVert_F\) | \(9.8\times10^{-16}\) | — |
+| \(1-F\) at \(\epsilon=\pm3\%\) | \(1.784\times10^{-10}\) | \(1.784\times10^{-10}\) |
+| \(\Delta P_0\) over 60 cycles, \(\epsilon=\pm3\%\) | \(3.853\times10^{-6}\) | \(3.853\times10^{-6}\) |
+
+The margin is large: the export stays exact for every sample count
+\(N\geq10\) that is a multiple of 5. It fails only at \(N=5\), where the
+shortest segment collapses to a single sample and the area identity no longer
+applies.
